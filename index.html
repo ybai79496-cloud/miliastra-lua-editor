@@ -1,0 +1,1891 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>千星 Lua 局外编辑器 · Simulator</title>
+<script src="fengari-web.js" onerror="this.remove()"></script>
+<script src="https://cdn.jsdelivr.net/npm/fengari-web@0.1.4/dist/fengari-web.js" onerror="this.remove()"></script>
+<style>
+:root{
+  --bg:#14141f; --bg2:#1b1b2a; --bg3:#23233a; --line:#2e2e46;
+  --tx:#d8d8ea; --tx2:#8a8aa8; --acc:#6c8cff; --acc2:#4a6ae0;
+  --ok:#5dd39e; --warn:#ffb454; --err:#ff6b6b; --gold:#ffd76e;
+}
+*{box-sizing:border-box; margin:0; padding:0;}
+html,body{height:100%; overflow:hidden;}
+body{background:var(--bg); color:var(--tx); font:13px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif; display:flex; flex-direction:column;}
+::-webkit-scrollbar{width:9px;height:9px;} ::-webkit-scrollbar-thumb{background:#3a3a56;border-radius:5px;} ::-webkit-scrollbar-track{background:transparent;}
+button,select,input[type=text],input[type=number],textarea{background:var(--bg3); color:var(--tx); border:1px solid var(--line); border-radius:6px; padding:4px 10px; font-size:12.5px; outline:none;}
+button{cursor:pointer;} button:hover{border-color:var(--acc);} button:active{transform:translateY(1px);}
+button.primary{background:var(--acc2); border-color:var(--acc2); color:#fff;}
+button.danger{background:#8f2f2f; border-color:#8f2f2f; color:#fff;}
+button.ghost{background:transparent;}
+button:disabled{opacity:.4; cursor:default;}
+
+/* ── 顶栏 ── */
+#topbar{display:flex; align-items:center; gap:8px; padding:6px 10px; background:var(--bg2); border-bottom:1px solid var(--line); flex-wrap:wrap; z-index:30;}
+#topbar .logo{font-weight:700; font-size:14px; color:var(--gold); margin-right:4px; white-space:nowrap;}
+#topbar .logo small{color:var(--tx2); font-weight:400;}
+.tsep{width:1px; height:20px; background:var(--line); margin:0 2px;}
+#fengariState{font-size:11px; padding:2px 8px; border-radius:10px;}
+#fengariState.ok{background:#20402f; color:var(--ok);} #fengariState.bad{background:#4a2020; color:var(--err);}
+#runInfo{font-size:11px; color:var(--tx2); margin-left:auto; white-space:nowrap;}
+
+/* ── 主体三栏 ── */
+#main{flex:1; display:flex; min-height:0;}
+#leftPanel{width:250px; background:var(--bg2); border-right:1px solid var(--line); display:flex; flex-direction:column; min-height:0;}
+#rightPanel{width:270px; background:var(--bg2); border-left:1px solid var(--line); display:flex; flex-direction:column; min-height:0;}
+.tabbar{display:flex; border-bottom:1px solid var(--line); flex:none; overflow-x:auto;}
+.tabbar .tab{padding:7px 12px; cursor:pointer; color:var(--tx2); border-bottom:2px solid transparent; white-space:nowrap; font-size:12.5px;}
+.tabbar .tab.on{color:var(--tx); border-bottom-color:var(--acc);}
+.tabbody{flex:1; overflow:auto; padding:8px; min-height:0;}
+.tabpage{display:none;} .tabpage.on{display:block;}
+
+/* ── 视口 ── */
+#viewportWrap{flex:1; position:relative; background:#0c0c14; overflow:hidden; display:flex; align-items:center; justify-content:center; min-width:0;}
+#viewportWrap.dragover{outline:3px dashed var(--acc); outline-offset:-6px;}
+#viewport{position:relative; background:#000; transform-origin:center center; box-shadow:0 0 0 1px #3a3a56, 0 8px 40px #000a; overflow:hidden; flex:none;}
+#viewport .sim-ctrl{position:absolute;}
+#viewport .sim-ctrl.c-text{display:flex; align-items:center; justify-content:center; text-align:center; white-space:pre-wrap; word-break:break-all;}
+#viewport .sim-ctrl.c-hit{cursor:pointer;}
+#viewport .sim-ctrl.simfocus{outline:2px dashed var(--gold); outline-offset:1px;}
+#viewport .sim-selected{outline:2px solid #ff4fd8 !important; outline-offset:0px;}
+#vpBadge{position:absolute; left:8px; top:8px; font-size:11px; background:#000a; padding:2px 8px; border-radius:8px; color:var(--tx2); pointer-events:none;}
+#vpHint{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--tx2); font-size:14px; text-align:center; pointer-events:none; padding:20px;}
+
+/* ── 控制台 ── */
+#consolePanel{height:190px; background:var(--bg2); border-top:1px solid var(--line); display:flex; flex-direction:column; flex:none;}
+#consolePanel.collapsed{height:30px;} #consolePanel.collapsed .conBody{display:none;}
+#consolePanel .conHead{display:flex; align-items:center; gap:8px; padding:4px 10px; flex:none;}
+#consolePanel .conHead .title{font-weight:600; font-size:12.5px;}
+#conFilter{width:160px;}
+#conBody{flex:1; overflow:auto; font:12px/1.6 Consolas, "Courier New", monospace; padding:2px 10px 8px;}
+.conline{white-space:pre-wrap; word-break:break-all;}
+.conline.print{color:#c8c8e0;} .conline.err{color:var(--err);} .conline.warn{color:var(--warn);}
+.conline.fault{color:#ff9c9c; background:#3a1515; padding:1px 6px; border-radius:4px; font-weight:600;}
+.conline.sys{color:#5dd39e;} .conline .t{color:#565678; margin-right:6px;}
+
+/* ── 通用小件 ── */
+.row{display:flex; align-items:center; gap:6px; margin:6px 0; flex-wrap:wrap;}
+.sec{border:1px solid var(--line); border-radius:8px; padding:8px; margin-bottom:8px; background:#1e1e30;}
+.sec h4{font-size:12px; color:var(--acc); margin-bottom:6px; font-weight:600;}
+.hint{font-size:11px; color:var(--tx2); line-height:1.5;}
+.fileItem{padding:5px 8px; border-radius:6px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; gap:4px;}
+.fileItem:hover{background:var(--bg3);}
+.fileItem .nm{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.fileItem .del{color:var(--tx2); cursor:pointer; padding:0 4px;} .fileItem .del:hover{color:var(--err);}
+/* 控件树 */
+#ctrlTree{font:12px/1.7 Consolas, monospace;}
+.tnode{padding:1px 4px; border-radius:4px; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.tnode:hover{background:var(--bg3);} .tnode.sel{background:#3d2a52; color:#ff9ce8;}
+.tnode .tv{color:#6f6f96;} .tnode .tx{color:var(--gold);}
+/* 检查器 */
+#inspector table{width:100%; border-collapse:collapse; font:11.5px Consolas, monospace;}
+#inspector td{padding:2px 4px; border-bottom:1px solid #26263c; vertical-align:top;}
+#inspector td.k{color:var(--acc); width:42%; word-break:break-all;}
+#inspector td.v{color:var(--tx); word-break:break-all;}
+/* 信号表 */
+.sigRow{border:1px solid var(--line); border-radius:6px; padding:5px 8px; margin:5px 0; font:11.5px Consolas, monospace;}
+.sigRow .nm{color:var(--gold); font-weight:700;}
+.sigRow .btns{margin-top:4px; display:flex; gap:6px;}
+/* 模态 */
+.modalBg{position:fixed; inset:0; background:#000a; display:none; align-items:center; justify-content:center; z-index:100;}
+.modalBg.on{display:flex;}
+.modal{background:var(--bg2); border:1px solid var(--line); border-radius:10px; max-width:720px; width:92%; max-height:82vh; display:flex; flex-direction:column;}
+.modal .mh{padding:10px 14px; font-weight:700; border-bottom:1px solid var(--line); display:flex; justify-content:space-between;}
+.modal .mb{padding:12px 14px; overflow:auto; line-height:1.7;}
+.modal textarea{width:100%; min-height:120px; font:12px Consolas,monospace; resize:vertical;}
+kbd{background:var(--bg3); border:1px solid var(--line); border-bottom-width:2px; border-radius:4px; padding:0 5px; font:11px Consolas,monospace;}
+.tag{display:inline-block; padding:0 7px; border-radius:8px; font-size:11px; background:var(--bg3); color:var(--tx2);}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <span class="logo">千星 Lua 局外编辑器 <small id="verTag">v1.0</small></span>
+  <span id="fengariState" class="bad">Lua引擎加载中…</span>
+  <div class="tsep"></div>
+  <button class="primary" id="btnRun">▶ 运行(F5)</button>
+  <button id="btnStop" disabled>■ 停止</button>
+  <button id="btnReload" disabled>⟳ 重载</button>
+  <div class="tsep"></div>
+  <button id="btnPause" disabled>⏸ 暂停(F8)</button>
+  <button id="btnStep" disabled>⏭ 单帧(F9)</button>
+  <button id="btnPadMode">🎮 手柄:关</button>
+  <span class="hint">慢放</span><input type="range" id="timeScale" min="0.1" max="2" step="0.1" value="1" style="width:80px;"><span id="tsVal" class="hint">1.0x</span>
+  <div class="tsep"></div>
+  <select id="vpSize" title="模拟画布尺寸(GetUICanvasSize)">
+    <option value="1280x720" selected>1280×720 (横屏PC)</option>
+    <option value="1920x1080">1920×1080</option>
+    <option value="1600x900">1600×900</option>
+    <option value="812x375">812×375 (手机横)</option>
+    <option value="375x812">375×812 (手机竖)</option>
+  </select>
+  <button id="btnSfx" class="ghost" title="模拟音效(WebAudio合成音)">🔈 音效关</button>
+  <button id="btnHelp">❓ 帮助</button>
+  <span id="runInfo">未运行</span>
+</div>
+
+<div id="main">
+  <div id="leftPanel">
+    <div class="tabbar">
+      <div class="tab on" data-page="pgFiles">文件</div>
+      <div class="tab" data-page="pgTree">控件树</div>
+      <div class="tab" data-page="pgSignal">信号·存档</div>
+      <div class="tab" data-page="pgSetting">设置</div>
+    </div>
+    <div class="tabbody">
+      <div class="tabpage on" id="pgFiles">
+        <div class="row"><button class="primary" id="btnOpen" style="flex:1">📂 导入 .lua 文件</button></div>
+        <div class="sec"><h4>最近文件</h4><div id="recentList"><div class="hint">暂无。导入或拖拽 .lua 到视口。</div></div></div>
+        <div class="hint">支持把导出的客户端 Lua 脚本直接拖进中间视口运行。文件内容只存在本机浏览器(localStorage)。</div>
+      </div>
+      <div class="tabpage" id="pgTree">
+        <div class="row"><input type="text" id="treeSearch" placeholder="搜索文本/类型…" style="flex:1"><button id="btnTreeRefresh">刷新</button></div>
+        <div id="ctrlTree"><div class="hint">运行后在树中检查每个控件；点击节点可在视口中高亮并查看属性。</div></div>
+      </div>
+      <div class="tabpage" id="pgSignal">
+        <div class="sec">
+          <h4>服务器信号模拟</h4>
+          <div class="row"><label style="display:flex;gap:4px;align-items:center;font-size:12px;"><input type="checkbox" id="autoEcho" checked>自动存档回声(<code>*_Save</code>→存→<code>*_Load</code>→回<code>*_LoadBack</code>)</label></div>
+          <div class="hint">发送的信号会记录在下方；已注册的回执 handler 可手动触发(参数用 JSON 数组，如 <code>[[1,0,1],[3,5]]</code>)。</div>
+          <div id="sigLog"></div>
+        </div>
+        <div class="sec">
+          <h4>局内存档变量 (GetGlobalCustomVariableValue)</h4>
+          <div class="hint">变量名 → JSON 值。留空则游戏走信号回执路径。</div>
+          <textarea id="varEditor" style="min-height:110px" placeholder='{"CS_Save":{"cleared":[1,0,1],"bestMoves":[3,0,5]}}'></textarea>
+          <div class="row"><button id="btnVarApply">应用变量</button><button id="btnVarClear" class="danger">清空</button></div>
+        </div>
+      </div>
+      <div class="tabpage" id="pgSetting">
+        <div class="sec">
+          <h4>控件模板索引映射</h4>
+          <div class="hint">InstantiateClientUIControl(索引) 的类型判定（影响 typeof 与探针）。选你脚本对应的存档预设。</div>
+          <div class="row">
+            <select id="tplPreset" style="flex:1">
+              <option value="blocked">blocked / cubequest / chessswap 存档</option>
+              <option value="blockyturn">blockyturn 存档</option>
+              <option value="xiaoyouxi">xiaoyouxi（小游戏合集）存档</option>
+              <option value="lianliankan">lianliankan（连连看）存档</option>
+              <option value="tankturmoil">tankturmoil（坦克动荡）存档</option>
+              <option value="custom">自定义…</option>
+            </select>
+          </div>
+          <textarea id="tplJson" style="min-height:100px"></textarea>
+          <div class="row"><button id="btnTplApply">应用映射</button></div>
+        </div>
+        <div class="sec">
+          <h4>本次运行用到的模板索引</h4>
+          <div class="hint">索引没有映射时按「万能控件」创建（文字/图片/按钮通吃）。点错类型会表现异常——在这里改成正确类型后点「重载」即可。</div>
+          <div id="usedTpls"><div class="hint">运行后显示。</div></div>
+        </div>
+        <div class="sec">
+          <h4>杂项</h4>
+          <div class="row"><label style="display:flex;gap:4px;align-items:center;font-size:12px;"><input type="checkbox" id="autoFocusInspector">点击视口控件时自动选中到检查器</label></div>
+          <div class="row"><label style="display:flex;gap:4px;align-items:center;font-size:12px;"><input type="checkbox" id="showVpGrid" >显示 100px 网格参考线</label></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="viewportWrap">
+    <div id="viewport"><div id="vpHint">📂 导入 .lua 文件后点「▶ 运行」<br><span class="hint">拖拽文件到此区域也可直接载入</span></div></div>
+    <div id="vpBadge">—</div>
+  </div>
+
+  <div id="rightPanel">
+    <div class="tabbar"><div class="tab on" data-page="pgInsp">检查器</div><div class="tab" data-page="pgApi">API速查</div></div>
+    <div class="tabbody">
+      <div class="tabpage on" id="pgInsp"><div id="inspector"><div class="hint">运行后点击左侧控件树的节点查看属性。</div></div></div>
+      <div class="tabpage" id="pgApi"><div id="apiRef" class="hint">加载中…</div></div>
+    </div>
+  </div>
+</div>
+
+<div id="consolePanel">
+  <div class="conHead">
+    <span class="title">控制台</span>
+    <input type="text" id="conFilter" placeholder="过滤…">
+    <button id="btnConClear" class="ghost">清空</button>
+    <button id="btnConExport" class="ghost">导出日志</button>
+    <button id="btnConCollapse" class="ghost" style="margin-left:auto">▾</button>
+  </div>
+  <div id="conBody"></div>
+</div>
+
+<div class="modalBg" id="modalBg"><div class="modal">
+  <div class="mh"><span id="modalTitle"></span><button class="ghost" onclick="document.getElementById('modalBg').classList.remove('on')">✕</button></div>
+  <div class="mb" id="modalBody"></div>
+</div></div>
+
+<input type="file" id="fileInput" accept=".lua,.txt" style="display:none" multiple>
+
+<script>
+/* i18n 中/日/韩/英（注入 by ZCode） */
+const I18N={"[SIM JS错误] ":{"ja":"[SIM JSエラー] ","ko":"[SIM JS 오류] ","en":"[SIM JS error] "},"[回调错误":{"ja":"[コールバックエラー","ko":"[콜백 오류","en":"[Callback error"},"[回调错误 ":{"ja":"[コールバックエラー ","ko":"[콜백 오류 ","en":"[Callback error "},"控件中心 + translate(-pivot)":{"ja":"コントロール中心 + translate(-pivot)","ko":"컨트롤 중심 + translate(-pivot)","en":"Control center + translate(-pivot)"},"🎮 手柄:":{"ja":"🎮 コントローラ:","ko":"🎮 게임패드:","en":"🎮 Gamepad:"},"开":{"ja":"オン","ko":"켬","en":"On"},"关":{"ja":"オフ","ko":"끔","en":"Off"},"手柄模式 ":{"ja":"コントローラモード ","ko":"게임패드 모드 ","en":"Gamepad mode "},"开启：GetDevice=Controller，WASD/方向键=左摇杆，Enter=A":{"ja":"オン：GetDevice=Controller、WASD/方向キー=左スティック、Enter=A","ko":"켜짐: GetDevice=Controller, WASD/방향키=왼쪽 스틱, Enter=A","en":"On: GetDevice=Controller, WASD/arrows=left stick, Enter=A"},"关闭":{"ja":"オフ","ko":"끄기","en":"Off"},"[手柄] 已连接":{"ja":"[コントローラ] 接続","ko":"[게임패드] 연결됨","en":"[Gamepad] connected"},"[手柄] 已断开":{"ja":"[コントローラ] 切断","ko":"[게임패드] 연결 해제","en":"[Gamepad] disconnected"},"纯色方块（白图，用于色块/底板）":{"ja":"単色ブロック（白画像・色块/ベース用）","ko":"단색 블록(흰 이미지, 색 블록/바닥용)","en":"Solid block (white image, for color blocks/panels)"},"闪光 sparkles":{"ja":"きらめき sparkles","ko":"반짝임 sparkles","en":"Sparkles"},"四芒星大星 star":{"ja":"四光星スター star","ko":"네 뾰족 큰 별 star","en":"Four-point star"},"奖章 medal":{"ja":"メダル medal","ko":"메달 medal","en":"Medal"},"对勾圆环 checkRing":{"ja":"チェックリング checkRing","ko":"체크 링 checkRing","en":"Check ring"},"锁 lock":{"ja":"錠 lock","ko":"자물쇠 lock","en":"Lock"},"皇冠 crown":{"ja":"王冠 crown","ko":"왕관 crown","en":"Crown"},"暗角渐晕 vignette":{"ja":"周辺減光 vignette","ko":"비네트 vignette","en":"Vignette"},"深蓝星空底 sky":{"ja":"濃紺星空ベース sky","ko":"짙은 남색 별하늘 바탕 sky","en":"Dark starry sky"},"星形标题条 titleBar":{"ja":"星型タイトルバー titleBar","ko":"별 모양 타이틀 바 titleBar","en":"Star title bar"},"棕金主按钮 btnMain":{"ja":"棕ゴールド メインボタン btnMain","ko":"브라운 골드 기본 버튼 btnMain","en":"Brown-gold primary button"},"棕金副按钮 btnSub":{"ja":"棕ゴールド サブボタン btnSub","ko":"브라운 골드 보조 버튼 btnSub","en":"Brown-gold secondary button"},"米白金框奖励卡 questCard":{"ja":"アイボリー金枠報酬カード questCard","ko":"아이보리 금테 보상 카드 questCard","en":"Ivory gold-frame reward card"},"蓝色世界主题背景 bgBlue":{"ja":"青ワールド背景 bgBlue","ko":"파란 세계 테마 배경 bgBlue","en":"Blue world theme background"},"紫色世界主题背景 bgPurple":{"ja":"紫ワールド背景 bgPurple","ko":"보라 세계 테마 배경 bgPurple","en":"Purple world theme background"},"绿色世界主题背景 bgGreen":{"ja":"緑ワールド背景 bgGreen","ko":"초록 세계 테마 배경 bgGreen","en":"Green world theme background"},"描述":{"ja":"説明","ko":"설명","en":"Description"},"绘制失败":{"ja":"描画失敗","ko":"그리기 실패","en":"Draw failed"},"未知素材":{"ja":"不明な素材","ko":"알 수 없는 소재","en":"Unknown asset"},"<div class=\"hint\">运行后点击左侧控件树的节点查看属性。</div>":{"ja":"<div class=\"hint\">実行後、左のコントロールツリーのノードをクリックするとプロパティを表示。</div>","ko":"<div class=\"hint\">실행 후 왼쪽 컨트롤 트리의 노드를 클릭하면 속성이 표시됩니다.</div>","en":"<div class=\"hint\">Run first, then click a node in the control tree to inspect it.</div>"},"路径":{"ja":"パス","ko":"경로","en":"Path"},"类型":{"ja":"タイプ","ko":"타입","en":"Type"},"位置 x,y (anchor ":{"ja":"位置 x,y (anchor ","ko":"위치 x,y (anchor ","en":"Pos x,y (anchor "},"尺寸 w×h":{"ja":"サイズ w×h","ko":"크기 w×h","en":"Size w×h"},"旋转/缩放":{"ja":"回転/スケール","ko":"회전/스케일","en":"Rotation/scale"}," @素材 ":{"ja":" @素材 ","ko":" @소재 ","en":" @asset "},"素材描述":{"ja":"素材説明","ko":"소재 설명","en":"Asset description"},"(未收录)":{"ja":"(未収録)","ko":"(미수록)","en":"(not indexed)"},"光标监听":{"ja":"カーソルリスナー","ko":"커서 리스너","en":"Cursor listeners"},"导航监听":{"ja":"ナビリスナー","ko":"내비 리스너","en":"Nav listeners"},"(属性) ":{"ja":"(プロパティ) ","ko":"(속성) ","en":"(props) "},"子控件数":{"ja":"子コントロール数","ko":"하위 컨트롤 수","en":"Children"},"<div class=\"hint\">无匹配控件</div>":{"ja":"<div class=\"hint\">該当コントロールなし</div>","ko":"<div class=\"hint\">일치하는 컨트롤 없음</div>","en":"<div class=\"hint\">No matching controls</div>"},"无":{"ja":"なし","ko":"없음","en":"None"},"JSON 解析失败: ":{"ja":"JSON 解析失敗: ","ko":"JSON 파싱 실패: ","en":"JSON parse failed: "},"<div class=\"hint\">暂无。导入或拖拽 .lua 到视口。</div>":{"ja":"<div class=\"hint\">まだありません。.lua をインポートかビューポートへドロップ。</div>","ko":"<div class=\"hint\">아직 없습니다. .lua를 가져오거나 뷰포트로 드래그하세요.</div>","en":"<div class=\"hint\">Empty. Import or drag a .lua into the viewport.</div>"},"移除":{"ja":"削除","ko":"제거","en":"Remove"},"[JS异常] ":{"ja":"[JS例外] ","ko":"[JS 예외] ","en":"[JS exception] "},"已停止。":{"ja":"停止しました。","ko":"중지되었습니다.","en":"Stopped."},"已载入: ":{"ja":"読込済み: ","ko":"불러옴: ","en":"Loaded: "}," (点运行)":{"ja":" (実行を押してください)","ko":" (실행을 누르세요)","en":" (press Run)"},"已载入 ":{"ja":"読込完了 ","ko":"불러옴 ","en":"Loaded "}," 字符)。":{"ja":" 文字)。","ko":" 자).","en":" chars)."},"已按文件名自动选择模板映射: ":{"ja":"ファイル名からテンプレートマップを自動選択: ","ko":"파일명으로 템플릿 매핑 자동 선택: ","en":"Template mapping auto-selected by filename: "},"fengari 引擎未加载(需联网加载 CDN)。请检查网络后刷新页面。":{"ja":"fengari エンジン未読込(CDN 取得が必要)。ネットワークを確認してページを再読込してください。","ko":"fengari 엔진 미로딩(CDN 필요). 네트워크 확인 후 새로고침하세요.","en":"fengari engine not loaded (CDN required). Check your network and refresh."},"[语法错误] ":{"ja":"[構文エラー] ","ko":"[구문 오류] ","en":"[Syntax error] "},"[执行错误] ":{"ja":"[実行エラー] ","ko":"[실행 오류] ","en":"[Runtime error] "},"▶ 运行 ":{"ja":"▶ 実行 ","ko":"▶ 실행 ","en":"▶ Run "}," | 画布 ":{"ja":" | キャンバス ","ko":" | 캔버스 ","en":" | canvas "},"<div class=\"hint\">运行后显示。</div>":{"ja":"<div class=\"hint\">実行後に表示。</div>","ko":"<div class=\"hint\">실행 후 표시됩니다.</div>","en":"<div class=\"hint\">Shown after a run.</div>"},"<div class=\"hint\">改类型后点「⟳ 重载」生效。</div>":{"ja":"<div class=\"hint\">タイプ変更後「⟳ 再読込」で反映。</div>","ko":"<div class=\"hint\">타입 변경 후 「⟳ 다시 로드」를 누르면 적용됩니다.</div>","en":"<div class=\"hint\">After changing the type, press \"⟳ Reload\" to apply.</div>"},"模板 ":{"ja":"テンプレート ","ko":"템플릿 ","en":"Template "},"（点「⟳ 重载」生效）":{"ja":"（「⟳ 再読込」で反映）","ko":"(「⟳ 다시 로드」로 적용)","en":" (press \"⟳ Reload\" to apply)"},"[手柄] A确认 → 焦点=":{"ja":"[コントローラ] A決定 → フォーカス=","ko":"[게임패드] A 확인 → 포커스=","en":"[Gamepad] A confirm → focus="},"🎮 检测到手柄: ":{"ja":"🎮 コントローラ検出: ","ko":"🎮 게임패드 감지됨: ","en":"🎮 Gamepad detected: "},"[手柄] A按下边沿":{"ja":"[コントローラ] A 押下","ko":"[게임패드] A 누름","en":"[Gamepad] A pressed"},"[手柄] B按下边沿":{"ja":"[コントローラ] B 押下","ko":"[게임패드] B 누름","en":"[Gamepad] B pressed"},"[手柄] X按下边沿 → 上一关":{"ja":"[コントローラ] X 押下 → 前のステージ","ko":"[게임패드] X 누름 → 이전 레벨","en":"[Gamepad] X pressed → previous level"},"[手柄] RB → 成就墙开关":{"ja":"[コントローラ] RB → 実績ウォール切替","ko":"[게임패드] RB → 업적 벽 전환","en":"[Gamepad] RB → achievement wall toggle"},"撤回":{"ja":"取り消し","ko":"취소","en":"Undo"},"重开":{"ja":"リスタート","ko":"재시작","en":"Restart"},"[手柄] 十字":{"ja":"[コントローラ] 十字キー","ko":"[게임패드] 십자키","en":"[Gamepad] D-pad"},"上":{"ja":"上","ko":"위","en":"Up"},"下":{"ja":"下","ko":"아래","en":"Down"},"[OnUpdate 错误] ":{"ja":"[OnUpdate エラー] ","ko":"[OnUpdate 오류] ","en":"[OnUpdate error] "},"单帧 +16.7ms (虚拟时钟 ":{"ja":"単フレーム +16.7ms (仮想クロック ","ko":"단일 프레임 +16.7ms (가상 시계 ","en":"Step +16.7ms (virtual clock "},"⏸ 暂停(F8)":{"ja":"⏸ 一時停止(F8)","ko":"⏸ 일시정지(F8)","en":"⏸ Pause (F8)"},"已停止":{"ja":"停止済み","ko":"중지됨","en":"Stopped"}," · 已暂停":{"ja":" · 一時停止中","ko":" · 일시정지","en":" · Paused"},"请先导入 .lua。":{"ja":"先に .lua をインポートしてください。","ko":"먼저 .lua를 가져오세요.","en":"Import a .lua first."},"▶ 继续(F8)":{"ja":"▶ 続行(F8)","ko":"▶ 계속(F8)","en":"▶ Resume (F8)"},"画布改为 ":{"ja":"キャンバス変更: ","ko":"캔버스 변경: ","en":"Canvas changed to "},"，自动重载…":{"ja":"、自動再読込…","ko":", 자동 다시 로드…","en":", auto-reloading…"},"🔊 音效开":{"ja":"🔊 効果音オン","ko":"🔊 효과음 켬","en":"🔊 SFX on"},"🔈 音效关":{"ja":"🔈 効果音オフ","ko":"🔈 효과음 끔","en":"🔈 SFX off"},"存档变量已应用: ":{"ja":"セーブ変数を適用: ","ko":"세이브 변수 적용: ","en":"Save variables applied: "},"JSON 错误: ":{"ja":"JSON エラー: ","ko":"JSON 오류: ","en":"JSON error: "},"存档变量已清空。":{"ja":"セーブ変数をクリアしました。","ko":"세이브 변수를 비웠습니다.","en":"Save variables cleared."},"映射 JSON 错误: ":{"ja":"マッピング JSON エラー: ","ko":"매핑 JSON 오류: ","en":"Mapping JSON error: "},"使用帮助":{"ja":"使い方","ko":"도움말","en":"Help"},"按钮+Tween 演示":{"ja":"ボタン+Tween デモ","ko":"버튼+Tween 데모","en":"Button + Tween demo"},"blocked（滑块解谜 · 手柄适配版）":{"ja":"blocked（スライドパズル・ゲームパッド対応）","ko":"blocked(슬라이드 퍼즐·패드 대응)","en":"blocked (Rush Hour · gamepad-ready)"},"存档信号演示":{"ja":"セーブシグナルデモ","ko":"세이브 시그널 데모","en":"Save signal demo"},"[致命] Lua 状态机 PANIC: ":{"ja":"[致命的] Lua ステートマシン PANIC: ","ko":"[치명적] Lua 상태 머신 PANIC: ","en":"[Fatal] Lua state machine PANIC: "}," —— 所有交互将失效，请停止后重新运行":{"ja":" —— すべての操作が無効になります。停止して再実行してください","ko":" —— 모든 상호작용이 작동하지 않습니다. 정지 후 다시 실행하세요","en":" — all interactions are dead; stop and re-run"},"Lua 5.3 (fengari) 就绪":{"ja":"Lua 5.3 (fengari) 準備完了","ko":"Lua 5.3 (fengari) 준비 완료","en":"Lua 5.3 (fengari) ready"},"千星 Lua 局外编辑器已就绪。导入 .lua 开始。":{"ja":"千星 Lua オフラインエディタ準備完了。.lua をインポートして開始。","ko":"천성 Lua 외부 에디터 준비 완료. .lua를 가져와 시작하세요.","en":"Qianxing Lua Editor ready. Import a .lua to start."},"fengari CDN 加载失败！":{"ja":"fengari CDN の読込に失敗しました！","ko":"fengari CDN 로딩 실패!","en":"fengari CDN failed to load!"},"fengari 引擎未加载：本编辑器需要联网从 CDN 加载 Lua 引擎，请检查网络后刷新。":{"ja":"fengari エンジン未読込：本エディタは CDN から Lua エンジンを取得する必要があります。ネットワークを確認して再読込してください。","ko":"fengari 엔진 미로딩: 이 에디터는 CDN에서 Lua 엔진을 가져와야 합니다. 네트워크 확인 후 새로고침하세요.","en":"fengari engine not loaded: this editor fetches the Lua engine from a CDN. Check your network and refresh."},"[服务器模拟] ":{"ja":"[サーバー模擬] ","ko":"[서버 시뮬] ","en":"[Server sim] "}," → 自动回执 ":{"ja":" → 自動応答 ","ko":" → 자동 응답 ","en":" → auto receipt "},"(隐)":{"ja":"(非表示)","ko":"(숨김)","en":"(hidden)"},"已注册回执 handler：":{"ja":"登録済み応答ハンドラ: ","ko":"등록된 응답 핸들러: ","en":"Registered receipt handlers: "},"手动触发":{"ja":"手動発火","ko":"수동 트리거","en":"Fire"},"发送记录：":{"ja":"送信記録:","ko":"전송 기록:","en":"Sent:"},"触发 ":{"ja":"発火 ","ko":"트리거 ","en":"Fire "},"参数(JSON 数组, 每项可以是数组/数字/字符串):":{"ja":"引数(JSON 配列、各項は配列/数値/文字列):","ko":"인자(JSON 배열, 각 항은 배열/숫자/문자열):","en":"Params (JSON array; items may be arrays/numbers/strings):"},"例: ":{"ja":"例: ","ko":"예: ","en":"e.g. "},"[手动触发] ":{"ja":"[手動発火] ","ko":"[수동 트리거] ","en":"[Manual trigger] "}," 错误] ":{"ja":" エラー] ","ko":" 오류] ","en":" error] "}," ×":{"ja":" ×","ko":" ×","en":" ×"}," · 控件":{"ja":" · コントロール","ko":" · 컨트롤","en":" · controls"},"千星 Lua 局外编辑器 · Simulator":{"ja":"千星 Lua オフラインエディタ · Simulator","ko":"천성 Lua 외부 에디터 · Simulator","en":"Qianxing Lua Editor · Simulator"},"千星 Lua 局外编辑器":{"ja":"千星 Lua オフラインエディタ","ko":"천성 Lua 외부 에디터","en":"Qianxing Lua Editor"},"Lua引擎加载中…":{"ja":"Luaエンジン読込中…","ko":"Lua 엔진 로딩 중…","en":"Loading Lua engine…"},"▶ 运行(F5)":{"ja":"▶ 実行(F5)","ko":"▶ 실행(F5)","en":"▶ Run (F5)"},"■ 停止":{"ja":"■ 停止","ko":"■ 정지","en":"■ Stop"},"⟳ 重载":{"ja":"⟳ 再読込","ko":"⟳ 다시 로드","en":"⟳ Reload"},"⏭ 单帧(F9)":{"ja":"⏭ 単フレーム(F9)","ko":"⏭ 한 프레임(F9)","en":"⏭ Step (F9)"},"🎮 手柄:关":{"ja":"🎮 コントローラ:オフ","ko":"🎮 게임패드:끔","en":"🎮 Gamepad:Off"},"慢放":{"ja":"スロー","ko":"슬로우","en":"Slow"},"1280×720 (横屏PC)":{"ja":"1280×720 (横画面PC)","ko":"1280×720 (가로 PC)","en":"1280×720 (PC landscape)"},"812×375 (手机横)":{"ja":"812×375 (スマホ横)","ko":"812×375 (폰 가로)","en":"812×375 (phone landscape)"},"375×812 (手机竖)":{"ja":"375×812 (スマホ縦)","ko":"375×812 (폰 세로)","en":"375×812 (phone portrait)"},"❓ 帮助":{"ja":"❓ ヘルプ","ko":"❓ 도움말","en":"❓ Help"},"未运行":{"ja":"未実行","ko":"미실행","en":"Not running"},"文件":{"ja":"ファイル","ko":"파일","en":"Files"},"控件树":{"ja":"コントロールツリー","ko":"컨트롤 트리","en":"Control tree"},"信号·存档":{"ja":"シグナル・セーブ","ko":"시그널·세이브","en":"Signals·Save"},"设置":{"ja":"設定","ko":"설정","en":"Settings"},"📂 导入 .lua 文件":{"ja":"📂 .lua をインポート","ko":"📂 .lua 가져오기","en":"📂 Import .lua"},"— 内置示例 —":{"ja":"— 内蔵サンプル —","ko":"— 내장 예제 —","en":"— Built-in examples —"},"载入":{"ja":"読込","ko":"불러오기","en":"Load"},"最近文件":{"ja":"最近のファイル","ko":"최근 파일","en":"Recent files"},"暂无。导入或拖拽 .lua 到视口。":{"ja":"まだありません。.lua をインポートするかビューポートへドロップ。","ko":"아직 없습니다. .lua를 가져오거나 뷰포트로 드래그하세요.","en":"Nothing yet. Import or drag a .lua into the viewport."},"支持把导出的客户端 Lua 脚本直接拖进中间视口运行。文件内容只存在本机浏览器(localStorage)。":{"ja":"書き出したクライアント Lua を中央ビューポートにドロップして実行できます。内容はブラウザ(localStorage)にのみ保存されます。","ko":"내보낸 클라이언트 Lua 스크립트를 가운데 뷰포트로 끌어다 놓아 실행할 수 있습니다. 내용은 브라우저(localStorage)에만 저장됩니다.","en":"Drop exported client Lua scripts into the viewport to run them. Content is stored only in your browser (localStorage)."},"刷新":{"ja":"更新","ko":"새로고침","en":"Refresh"},"运行后在树中检查每个控件；点击节点可在视口中高亮并查看属性。":{"ja":"実行後、ツリーで各コントロールを確認。ノードをクリックするとビューポートでハイライトし、右側でプロパティを確認できます。","ko":"실행 후 트리에서 각 컨트롤을 확인하세요. 노드를 클릭하면 뷰포트에서 하이라이트되고 속성을 볼 수 있습니다.","en":"Inspect controls in the tree after a run; clicking a node highlights it in the viewport and shows its properties."},"服务器信号模拟":{"ja":"サーバーシグナル模擬","ko":"서버 시그널 시뮬레이션","en":"Server signal simulation"},"自动存档回声(":{"ja":"自動セーブエコー(","ko":"자동 세이브 에코(","en":"Auto save echo("},"→存→":{"ja":"→保存→","ko":"→저장→","en":"→save→"},"→回":{"ja":"→応答","ko":"→응답","en":"→echo"},"发送的信号会记录在下方；已注册的回执 handler 可手动触发(参数用 JSON 数组，如":{"ja":"送信したシグナルは下に記録。登録済みの応答ハンドラは手動発火できます(引数は JSON 配列、例:","ko":"보낸 시그널은 아래에 기록됩니다. 등록된 응답 핸들러는 수동으로 트리거할 수 있습니다(인자는 JSON 배열, 예:","en":"Sent signals are logged below; registered receipt handlers can be fired manually (params as a JSON array, e.g."},"局内存档变量 (GetGlobalCustomVariableValue)":{"ja":"セーブ変数 (GetGlobalCustomVariableValue)","ko":"세이브 변수 (GetGlobalCustomVariableValue)","en":"Local save variables (GetGlobalCustomVariableValue)"},"变量名 → JSON 值。留空则游戏走信号回执路径。":{"ja":"変数名 → JSON 値。空欄の場合はゲームのシグナル応答経路を使用。","ko":"변수명 → JSON 값. 비워 두면 게임의 시그널 응답 경로를 사용합니다.","en":"Variable name → JSON value. Leave empty to use the in-game signal-receipt path."},"应用变量":{"ja":"変数を適用","ko":"변수 적용","en":"Apply vars"},"清空":{"ja":"クリア","ko":"비우기","en":"Clear"},"控件模板索引映射":{"ja":"テンプレート索引マッピング","ko":"템플릿 인덱스 매핑","en":"Control template index mapping"},"InstantiateClientUIControl(索引) 的类型判定（影响 typeof 与探针）。选你脚本对应的存档预设。":{"ja":"InstantiateClientUIControl(索引) のタイプ判定（typeof とプローブに影響）。スクリプトに合うセーブプリセットを選択。","ko":"InstantiateClientUIControl(인덱스)의 타입 판정(typeof와 프로브에 영향). 스크립트에 맞는 세이브 프리셋을 선택하세요.","en":"How InstantiateClientUIControl(index) resolves types (affects typeof and probes). Pick the preset matching your save."},"blocked / cubequest / chessswap 存档":{"ja":"blocked / cubequest / chessswap セーブ","ko":"blocked / cubequest / chessswap 세이브","en":"blocked / cubequest / chessswap saves"},"blockyturn 存档":{"ja":"blockyturn セーブ","ko":"blockyturn 세이브","en":"blockyturn saves"},"xiaoyouxi（小游戏合集）存档":{"ja":"xiaoyouxi（ミニゲーム集）セーブ","ko":"xiaoyouxi(미니게임 모음) 세이브","en":"xiaoyouxi (minigame collection) saves"},"lianliankan（连连看）存档":{"ja":"lianliankan（連連看）セーブ","ko":"lianliankan(맞추기 게임) 세이브","en":"lianliankan (matching game) saves"},"tankturmoil（坦克动荡）存档":{"ja":"tankturmoil（戦車紛争）セーブ","ko":"tankturmoil(탱크 소동) 세이브","en":"tankturmoil (tank turmoil) saves"},"自定义…":{"ja":"カスタム…","ko":"사용자 지정…","en":"Custom…"},"应用映射":{"ja":"マッピングを適用","ko":"매핑 적용","en":"Apply mapping"},"本次运行用到的模板索引":{"ja":"今回の実行で使用したテンプレート索引","ko":"이번 실행에서 사용한 템플릿 인덱스","en":"Template indices used this run"},"索引没有映射时按「万能控件」创建（文字/图片/按钮通吃）。点错类型会表现异常——在这里改成正确类型后点「重载」即可。":{"ja":"マップのない索引は「万能コントロール」として作成（テキスト/画像/ボタン兼用）。タイプを誤ると異常表示——ここで正しいタイプに変えて「再読込」を押してください。","ko":"매핑 없는 인덱스는 \"만능 컨트롤\"로 생성(텍스트/이미지/버튼 겸용). 타입을 잘못 지정하면 이상 동작——여기서 올바른 타입으로 바꾸고 「다시 로드」를 누르세요.","en":"Unmapped indices are created as \"universal controls\" (text/image/button all-in-one). Wrong types misbehave — fix the type here, then press \"Reload\"."},"运行后显示。":{"ja":"実行後に表示。","ko":"실행 후 표시됩니다.","en":"Shown after a run."},"杂项":{"ja":"その他","ko":"기타","en":"Misc"},"点击视口控件时自动选中到检查器":{"ja":"ビューポートのコントロールをクリックしたらインスペクターで自動選択","ko":"뷰포트 컨트롤 클릭 시 검사기에서 자동 선택","en":"Auto-select clicked viewport controls in the inspector"},"显示 100px 网格参考线":{"ja":"100px グリッドガイドを表示","ko":"100px 그리드 가이드 표시","en":"Show 100px grid guides"},"📂 导入 .lua 文件后点「▶ 运行」":{"ja":"📂 .lua をインポートして「▶ 実行」を押してください","ko":"📂 .lua 가져온 후 「▶ 실행」을 누르세요","en":"📂 Import a .lua, then press \"▶ Run\""},"拖拽文件到此区域也可直接载入":{"ja":"この領域へのファイルドロップでも読み込めます","ko":"이 영역으로 파일을 끌어다 놓아도 불러올 수 있습니다","en":"You can also drop files here to load them"},"检查器":{"ja":"インスペクター","ko":"검사기","en":"Inspector"},"API速查":{"ja":"API 早見表","ko":"API 빠른 참조","en":"API reference"},"运行后点击左侧控件树的节点查看属性。":{"ja":"実行後、左のコントロールツリーのノードをクリックするとプロパティを表示。","ko":"실행 후 왼쪽 컨트롤 트리의 노드를 클릭하면 속성이 표시됩니다.","en":"Run first, then click a node in the control tree to inspect it."},"加载中…":{"ja":"読込中…","ko":"로딩 중…","en":"Loading…"},"控制台":{"ja":"コンソール","ko":"콘솔","en":"Console"},"导出日志":{"ja":"ログを書き出す","ko":"로그 내보내기","en":"Export log"},"模拟画布尺寸(GetUICanvasSize)":{"ja":"模擬キャンバスサイズ(GetUICanvasSize)","ko":"시뮬 캔버스 크기(GetUICanvasSize)","en":"Simulated canvas size (GetUICanvasSize)"},"模拟音效(WebAudio合成音)":{"ja":"模擬効果音(WebAudio合成音)","ko":"시뮬 효과음(WebAudio 합성음)","en":"Simulated SFX (WebAudio synth)"},"搜索文本/类型…":{"ja":"テキスト/タイプ検索…","ko":"텍스트/타입 검색…","en":"Search text/type…"},"过滤…":{"ja":"絞り込み…","ko":"필터…","en":"Filter…"}};
+const HELP_I18N={"ja": "\n  <b>これは何？</b><br>\n  テストサーバー空白期用の千星クライアント Lua スクリプト シミュレーター：スクリプトをインポート → 画面を描画 → マウス/キーボード/コントローラで試玩。<br><br>\n  <b>クイックスタート</b><br>\n  1. 「📂 .lua をインポート」かファイルをビューポートへドロップ → 自動実行；<br>\n  2. 左側「設定」でテンプレートマップのプリセットを選択（blocked/cubequest/chessswap が一式、blockyturn が一式）。選ばないと typeof 判定がズレます；<br>\n  3. コンソールで print / GAME FAULT ログを確認。<br><br>\n  <b>操作</b><br>\n  マウス = カーソル（CursorClick/Down/Up、ドラッグも対応）；<br>\n  <kbd>W A S D</kbd>/<kbd>方向キー</kbd> = 移動キー；<kbd>R</kbd> = リスタートキー(Key42)；<kbd>Esc</kbd> = コントローラ戻る；<kbd>Enter</kbd> = Confirm ナビ；<br>\n  実機コントローラ：挿すだけ（左スティック = GetControllerLeftStickAxis、A/B/十字キー = ナビ）。<br><br>\n  <b>デバッグ</b><br>\n  <kbd>F5</kbd> 実行 · <kbd>F8</kbd> 一時停止 · <kbd>F9</kbd> 単フレームステップ · 下部スライダー 0.1x スロー（Tween/OnUpdate/仮想 os.clock 同時スロー）；<br>\n  「コントロールツリー」はリアルタイム階層 + 検索。ノードをクリック = ビューポートでハイライト + 右側インスペクターで全プロパティ；<br>\n  「シグナル・セーブ」ページ：*_Save→保存→*_Load は自動で *_LoadBack を返す（自動エコー）。任意の RegisterServerSignalHandler の応答も手動発火可能（引数は JSON 配列）；<br>\n  GetGlobalCustomVariableValue は「セーブ変数」パネルの JSON を読み取る。<br><br>\n  <b>既知の近似（非 1:1）</b><br>\n  · 公式素材画像（100001～112xxx）はプログラム近似描画（形状/配色は意味ベース）。原画ではない；<br>\n  · コントロールテンプレートはエンジンのスタイルを描画せず、スクリプトが設定したプロパティで描画；<br>\n  · PlayAudio2D は合成音（デフォルト オフ）；<br>\n  · ナビイベントはグローバル配信（実機はフォーカス コントロールへ送信）。ほとんどのゲームは同じ動作。<br><br>\n  <b>制限</b><br>\n  fengari エンジンの読込にはネット接続（CDN）が必要。ファイル内容はブラウザ内にのみ保存。", "ko": "\n  <b>이것은 무엇?</b><br>\n  테스트 서버 공백기용 천성 클라이언트 Lua 스크립트 시뮬레이터: 스크립트 가져오기 → 화면 렌더링 → 마우스/키보드/게임패드로 시험 플레이.<br><br>\n  <b>빠른 시작</b><br>\n  1. 「📂 .lua 가져오기」또는 파일을 뷰포트로 드래그 → 자동 실행;<br>\n  2. 왼쪽 「설정」에서 템플릿 매핑 프리셋 선택(blocked/cubequest/chessswap 한 세트, blockyturn 한 세트). 선택하지 않으면 typeof 판별이 어긋납니다;<br>\n  3. 콘솔에서 print / GAME FAULT 로그 확인.<br><br>\n  <b>조작</b><br>\n  마우스 = 커서(CursorClick/Down/Up, 드래그 지원);<br>\n  <kbd>W A S D</kbd>/<kbd>방향키</kbd> = 이동키; <kbd>R</kbd> = 재시작 키(Key42); <kbd>Esc</kbd> = 게임패드 취소; <kbd>Enter</kbd> = Confirm 내비;<br>\n  실제 게임패드: 꽂으면 바로 사용(왼쪽 스틱 = GetControllerLeftStickAxis, A/B/십자키 = 내비).<br><br>\n  <b>디버그</b><br>\n  <kbd>F5</kbd> 실행 · <kbd>F8</kbd> 일시정지 · <kbd>F9</kbd> 한 프레임 스텝 · 하단 슬라이더 0.1x 슬로우(Tween/OnUpdate/가상 os.clock 동시 슬로우);<br>\n  「컨트롤 트리」실시간 계층 + 검색, 노드 클릭 = 뷰포트 하이라이트 + 오른쪽 검사기에서 전체 속성;<br>\n  「시그널·세이브」페이지: *_Save→저장→*_Load 는 자동으로 *_LoadBack 응답(자동 에코); 등록된 RegisterServerSignalHandler 응답도 수동 트리거 가능(인자 JSON 배열);<br>\n  GetGlobalCustomVariableValue 는 「세이브 변수」패널의 JSON을 읽습니다.<br><br>\n  <b>알려진 근사(1:1 아님)</b><br>\n  · 공식 소재 이미지(100001~112xxx)는 프로그램 근사 렌더링(형상/배색은 의미 기준). 원본 아님;<br>\n  · 컨트롤 템플릿은 엔진 스타일을 렌더링하지 않고 스크립트가 설정한 속성으로 그림;<br>\n  · PlayAudio2D 는 합성음(기본 꺼짐);<br>\n  · 내비 이벤트는 전역 전달(실기기는 포커스 컨트롤에 전송). 대부분의 게임은 동일하게 동작.<br><br>\n  <b>제한</b><br>\n  fengari 엔진 로딩에 네트워크(CDN) 필요. 파일 내용은 브라우저에만 저장.", "en": "\n  <b>What is this</b><br>\n  An offline simulator for Qianxing client Lua scripts, built for test-server downtime: import a script → render the UI → playtest with mouse/keyboard/gamepad.<br><br>\n  <b>Quick start</b><br>\n  1. Press \"📂 Import .lua\" or drop a file into the viewport → it runs automatically;<br>\n  2. In \"Settings\" on the left, pick the template-mapping preset matching your save (blocked/cubequest/chessswap is one set, blockyturn another), otherwise typeof probes misclassify;<br>\n  3. Watch print / GAME FAULT logs in the console.<br><br>\n  <b>Controls</b><br>\n  Mouse = cursor (CursorClick/Down/Up; press-drag supported);<br>\n  <kbd>W A S D</kbd>/<kbd>arrows</kbd> = movement keys; <kbd>R</kbd> = restart key (Key42); <kbd>Esc</kbd> = gamepad back; <kbd>Enter</kbd> = Confirm navigation;<br>\n  Real gamepad: plug and play (left stick = GetControllerLeftStickAxis, A/B/d-pad = navigation).<br><br>\n  <b>Debugging</b><br>\n  <kbd>F5</kbd> run · <kbd>F8</kbd> pause · <kbd>F9</kbd> single step · bottom slider 0.1x slow motion (Tween/OnUpdate/virtual os.clock all slow down together);<br>\n  \"Control tree\": live hierarchy + search; clicking a node highlights it in the viewport and shows all properties in the inspector;<br>\n  \"Signals·Save\" tab: *_Save → save → *_Load automatically answers *_LoadBack (auto echo); any RegisterServerSignalHandler receipt can also be fired manually (params as a JSON array);<br>\n  GetGlobalCustomVariableValue reads the JSON in the \"Save variables\" panel.<br><br>\n  <b>Known approximations (not 1:1)</b><br>\n  · Official asset images (100001~112xxx) are procedural approximations (shape/colors by meaning), not originals;<br>\n  · Control templates do not render engine styling; they draw the properties your script sets;<br>\n  · PlayAudio2D is a synthesized beep (off by default);<br>\n  · Navigation events are dispatched globally (on device they go to the focused control); most games behave the same.<br><br>\n  <b>Limits</b><br>\n  Loading the fengari engine requires internet (CDN); file content stays in your local browser only."};
+const BY_LANG={ja:{},ko:{},en:{}};for(const zh in I18N){const t=I18N[zh];if(t)for(const k of["ja","ko","en"]){if(t[k])BY_LANG[k][zh]=t[k];}}
+let SIM_LANG="zh"; try{ SIM_LANG=localStorage.getItem("sim_lang")||"zh"; }catch(e){}
+if(SIM_LANG!=="zh"&&!BY_LANG[SIM_LANG]) SIM_LANG="zh";
+function __i18n(zh){ const d=BY_LANG[SIM_LANG]; return (d&&Object.prototype.hasOwnProperty.call(d,zh))?d[zh]:zh; }
+function applyStaticLang(){
+  document.title=__i18n("千星 Lua 局外编辑器 · Simulator");
+  document.documentElement.lang=SIM_LANG==="zh"?"zh-CN":SIM_LANG;
+  const d=BY_LANG[SIM_LANG];
+  const skip=n=>{ if(n&&n.closest&&n.closest("#vpHint")) return false; return !!(n&&n.closest&&n.closest("#conBody,#apiRef,#viewport")); };
+  const w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,null); const ns=[];
+  while(w.nextNode()) ns.push(w.currentNode);
+  for(const n of ns){ if(skip(n.parentElement)) continue;
+    if(n.__zh===undefined) n.__zh=(n.textContent||"").trim();
+    const k=n.__zh;
+    if(SIM_LANG==="zh"){ if(k) n.textContent=k; continue; }
+    if(k&&Object.prototype.hasOwnProperty.call(d,k)) n.textContent=d[k]; }
+  document.querySelectorAll("[placeholder],[title]").forEach(function(e){
+    if(skip(e)) return;
+    if(!e.__zhAttrs){ e.__zhAttrs={}; ["placeholder","title"].forEach(function(at){
+      const v=e.getAttribute(at); if(v) e.__zhAttrs[at]=v; }); }
+    ["placeholder","title"].forEach(function(at){
+      if(SIM_LANG==="zh"){ const o=e.__zhAttrs[at]; if(o!==undefined) e.setAttribute(at,o); return; }
+      const v=e.__zhAttrs[at];
+      if(v&&Object.prototype.hasOwnProperty.call(d,v)) e.setAttribute(at,d[v]); }); });
+}
+function buildLangSel(){
+  const bar=document.getElementById("topbar"); if(!bar||document.getElementById("langSel")) return;
+  const sel=document.createElement("select"); sel.id="langSel"; sel.title="Language";
+  [["zh","中文"],["ja","日本語"],["ko","한국어"],["en","English"]].forEach(function(p){
+    const o=document.createElement("option"); o.value=p[0]; o.textContent=p[1]; sel.appendChild(o); });
+  sel.value=SIM_LANG;
+  sel.onchange=function(){ SIM_LANG=sel.value; try{ localStorage.setItem("sim_lang",SIM_LANG); }catch(e){} applyStaticLang(); try{ if(document.getElementById("modalBg").classList.contains("on")) showHelp(); }catch(e){} };
+  const anchor=document.getElementById("runInfo"); bar.insertBefore(sel,anchor||null);
+}
+applyStaticLang(); buildLangSel();
+</script>
+<script>
+"use strict";
+/* ============================================================================
+ * 千星 Lua 局外编辑器 —— 测试服真空期用的独立模拟器
+ * 内核：fengari (Lua 5.3 in JS) + DOM 渲染 + 输入桥 + Tween + 信号/存档模拟
+ * ============================================================================ */
+
+const $ = id => document.getElementById(id);
+const SIM = {
+  L: null,            // lua_State
+  running: false, started: false, paused: false,
+  vclock: 0,          // 虚拟时钟(秒,受暂停/慢放控制) —— os.clock 覆写
+  timeScale: 1,
+  cw: 1280, ch: 720,  // 画布逻辑尺寸
+  ctrlSeq: 1,
+  ctrls: new Map(),   // id -> UIControl
+  root: null,         // 根容器控件(script.object)
+  keyListeners: [],   // {type, ref}
+  navAll: [],         // {ctrl, type, ref} 导航事件(全局派发)
+  sigHandlers: new Map(), // name -> [luaRef]
+  sigLog: [],
+  sigStore: new Map(),    // 自动回声: base -> args[]
+  focusCtrl: null,
+  sfxOn: false,
+  updateEnabled: false,
+  lastFileName: "",
+  selected: null,
+  treeTimer: null,
+};
+
+/* ───────────────────────── 1. fengari 引擎封装 ───────────────────────── */
+let lua, lauxlib, lualib, to_luastring, to_jsstring, lreg;
+function bootFengari(){
+  if (typeof fengari === "undefined") return false;
+  lua = fengari.lua; lauxlib = fengari.lauxlib; lualib = fengari.lualib;
+  to_luastring = fengari.to_luastring; to_jsstring = fengari.to_jsstring;
+  lreg = lua.LUA_REGISTRYINDEX;
+  return true;
+}
+const FENGARI_OK = bootFengari();
+
+/* cfunction 统一包装：JS 异常转 Lua error */
+function cf(fn){
+  return function(L){
+    try { return fn(L); }
+    catch(e){
+      if (e && e instanceof lua.LuaError) throw e;
+      return lauxlib.luaL_error(L, to_luastring(__i18n("[SIM JS错误] ") + ((e && e.message) || String(e))));
+    }
+  };
+}
+/* 取参工具 */
+function aNum(L, i){ return lua.lua_tonumber(L, i); }
+function aStr(L, i){ const s = lua.lua_tostring(L, i); return s == null ? "" : to_jsstring(s); }
+function aBool(L, i){ return lua.lua_toboolean(L, i); }
+function aOptNum(L, i, d){ return lua.lua_isnumber(L, i) ? lua.lua_tonumber(L, i) : d; }
+/* Lua table → JS(浅层递归；function 转标记) */
+function aVal(L, i){
+  const t = lua.lua_type(L, i);
+  if (t === lua.LUA_TNUMBER) return lua.lua_tonumber(L, i);
+  if (t === lua.LUA_TSTRING){ const s = lua.lua_tostring(L, i); return to_jsstring(s); }
+  if (t === lua.LUA_TBOOLEAN) return lua.lua_toboolean(L, i);
+  if (t === lua.LUA_TNIL || t === lua.LUA_TNONE) return undefined;
+  if (t === lua.LUA_TFUNCTION){ lua.lua_pushvalue(L, i); return { __luafn: lauxlib.luaL_ref(L, lreg) }; } // ref 只消耗副本
+  if (t === lua.LUA_TTABLE){
+    const o = {};
+    lua.lua_pushvalue(L, i);
+    const ti = lua.lua_gettop(L);
+    lua.lua_pushnil(L);
+    while (lua.lua_next(L, ti) !== 0){
+      const kt = lua.lua_type(L, -2); // 先判型再取值: lua_tostring 会把数字键就地转字符串,毁掉 next 迭代
+      let k;
+      if (kt === lua.LUA_TSTRING) k = to_jsstring(lua.lua_tostring(L, -2));
+      else k = lua.lua_tonumber(L, -2);
+      o[k] = aVal(L, -1);
+      lua.lua_pop(L, 1);
+    }
+    lua.lua_pop(L, 1);
+    return o;
+  }
+  return undefined;
+}
+/* JS → Lua push */
+function pushVal(L, v){
+  if (v === undefined || v === null) lua.lua_pushnil(L);
+  else if (typeof v === "number") lua.lua_pushnumber(L, v);
+  else if (typeof v === "boolean") lua.lua_pushboolean(L, v);
+  else if (typeof v === "string") lua.lua_pushstring(L, to_luastring(v));
+  else if (Array.isArray(v)){ lua.lua_createtable(L, v.length, 0); v.forEach((x, i) => { pushVal(L, x); lua.lua_rawseti(L, -2, i + 1); }); }
+  else if (typeof v === "function"){ lua.lua_pushcfunction(L, v); }
+  else if (v && (v.__luafn !== undefined || v.__luaref !== undefined)){ lua.lua_rawgeti(L, lreg, v.__luafn !== undefined ? v.__luafn : v.__luaref); }
+  else if (typeof v === "object"){
+    lua.lua_createtable(L, 0, 8);
+    for (const k in v){ lua.lua_pushstring(L, to_luastring(k)); pushVal(L, v[k]); lua.lua_rawset(L, -3); }
+  } else lua.lua_pushnil(L);
+}
+/* 调用保存的 Lua 函数引用 */
+function callRef(ref, jsArgs, label){
+  const L = SIM.L; if (!L || !ref) return;
+  const top = lua.lua_gettop(L);
+  lua.lua_rawgeti(L, lreg, ref);
+  (jsArgs || []).forEach(a => pushVal(L, a));
+  const ok = lua.lua_pcall(L, (jsArgs || []).length, lua.LUA_MULTRET, 0);
+  if (ok !== lua.LUA_OK){
+    const es = lua.lua_tostring(L, -1);
+    conLog("err", __i18n("[回调错误") + (label ? ":" + label : "") + "] " + (es ? to_jsstring(es) : "?"));
+    lua.lua_settop(L, top);
+    return;
+  }
+  lua.lua_settop(L, top); // 丢弃返回值(吞事件)
+}
+
+/* ───────────────────────── 2. UIControl 控件系统 ───────────────────────── */
+const TYPENAME = {
+  text: "ClientUITextBoxControl", image: "ClientUIImageControl",
+  button: "ClientUIPresetButtonControl", cursor: "ClientUICursorEventAreaControl",
+  keyhint: "ClientUIKeyHintControl", container: "ClientUIContainerControl",
+  auto: "ClientUIAutoControl", anim: "ClientUIAnimationControl", fullscreen: "ClientUIFullscreenAnimationControl",
+};
+let TPL_MAP = {}; // 索引 -> text/image/button/cursor/keyhint
+
+class UIControl {
+  constructor(type, parent, tplId){
+    this.id = SIM.ctrlSeq++;
+    this.type = type; this.tplId = tplId;
+    this.parent = parent || null; this.children = [];
+    if (parent) parent.children.push(this);
+    this.div = document.createElement("div");
+    this.div.className = "sim-ctrl c-" + type + (type === "button" || type === "cursor" ? " c-hit" : "");
+    this.div.dataset.cid = this.id;
+    this.div.style.width = "100px"; this.div.style.height = "100px";
+    this.div.style.transform = "";
+    this.raycast = (type === "button" || type === "cursor");
+    this.div.style.pointerEvents = this.raycast ? "auto" : "none";
+    (parent ? parent.div : $("viewport")).appendChild(this.div);
+    // 属性默认值
+    this.ax = 0; this.ay = 0; this.px = .5; this.py = .5;
+    this.x = 0; this.y = 0; this.w = 100; this.h = 100;
+    this.rot = 0; this.sx = 1; this.sy = 1;
+    this.active = true; this.visible = true;
+    this.text = ""; this.fontSize = 20; this.fcolor = [255,255,255,255]; this.bg = null;
+    this.imageColor = [255,255,255,255]; this.assetId = null;
+    this.alignH = "Middle"; this.alignV = "Middle";
+    this.listeners = { cursor: {}, nav: {}, key: [] };
+    this.navCfg = {}; this.canFocus = true; this.interact = true;
+    this.extra = {};
+    SIM.ctrls.set(this.id, this);
+    this.bindDOM();
+    this.apply();
+  }
+  bindDOM(){
+    const self = this;
+    // 真机光标事件派发给最上层命中控件、不冒泡；这里 stopPropagation 防止父容器把 DRAG 覆盖掉
+    this.div.addEventListener("mousedown", e => {
+      if (e.button === 0){
+        e.preventDefault(); e.stopPropagation();
+        DRAG.active = true; DRAG.ctrl = self;
+        fireCursor(self, "CursorDown", e);
+      }
+    });
+    this.div.addEventListener("mouseup",   e => { if (e.button === 0 && DRAG.ctrl === self){ e.stopPropagation(); fireCursor(self, "CursorUp", e); DRAG.active = false; DRAG.ctrl = null; } });
+    this.div.addEventListener("click",     e => { e.stopPropagation(); fireCursor(self, "CursorClick", e); });
+  }
+  setAsset(id, colorArr){
+    this.assetId = id;
+    if (colorArr) this.imageColor = colorArr;
+    this.apply();
+  }
+  setProp(k, v){
+    switch(k){
+      case "anchoredPositionX": this.x = v; break;
+      case "anchoredPositionY": this.y = v; break;
+      case "localScaleX": this.sx = v; break;
+      case "localScaleY": this.sy = v; break;
+      case "imageColor": this.imageColor = rgba(v); if(this.assetId) AssetPainter.touch(this.assetId, this.imageColor); break;
+      case "x": this.x = v; break; case "y": this.y = v; break;
+      case "w": this.w = v; break; case "h": this.h = v; break;
+      default: this.extra[k] = v; return;
+    }
+    this.apply();
+  }
+  apply(){
+    const d = this.div.style;
+    const W = SIM.cw, H = SIM.ch;
+    const cxp = this.ax * W + this.x;                 // 控件中心(逻辑x, 原点左下)
+    const cyp = this.ay * H + this.y;
+    const left = cxp - this.px * this.w;
+    const top = H - cyp - (1 - this.py) * this.h - this.py * 0; // pivot 处理:中心点
+    // 统一按__i18n("控件中心 + translate(-pivot)")实现, 与引擎一致
+    d.left = (cxp - 0) + "px"; d.top = (H - cyp) + "px";
+    d.width = this.w + "px"; d.height = this.h + "px";
+    d.transform = `translate(${-this.px*100}%, ${-(1-this.py)*100}%) rotate(${-this.rot}deg) scale(${this.sx}, ${this.sy})`;
+    d.display = this.active ? "" : "none";
+    d.visibility = this.visible ? "" : "hidden";
+    d.pointerEvents = this.raycast ? "auto" : "none";
+    // 文本（万能控件 auto 也按 text 渲染）
+    if (this.type === "text" || this.type === "keyhint" || this.type === "auto" || this.text !== ""){
+      if (this.div.innerText !== this.text) this.div.innerText = this.text;
+      d.fontSize = Math.max(8, this.fontSize) + "px";
+      d.color = css(this.fcolor);
+      d.backgroundColor = this.bg ? css(this.bg) : "transparent";
+      d.textAlign = this.alignH === "Left" ? "left" : this.alignH === "Right" ? "right" : "center";
+      d.justifyContent = this.alignH === "Left" ? "flex-start" : this.alignH === "Right" ? "flex-end" : "center";
+      d.alignItems = this.alignV === "Top" ? "flex-start" : this.alignV === "Bottom" ? "flex-end" : "center";
+      d.flexDirection = "row";
+    }
+    // 图片/底色（万能控件 auto 通吃）
+    if (this.type === "image" || this.type === "button" || this.type === "container" || this.type === "cursor" || this.type === "auto"){
+      if (this.assetId){
+        const url = AssetPainter.paint(this.assetId, this.imageColor);
+        d.backgroundImage = `url("${url}")`;
+        d.backgroundSize = "100% 100%";
+        d.backgroundColor = "transparent";
+      } else {
+        d.backgroundImage = "";
+        d.backgroundColor = (this.type === "image") ? css(this.imageColor) : "transparent";
+      }
+    }
+  }
+  destroy(){
+    try { this.div.remove(); } catch(e){}
+    if (this.parent) this.parent.children = this.parent.children.filter(c => c !== this);
+    SIM.ctrls.delete(this.id);
+    if (SIM.focusCtrl === this) SIM.focusCtrl = null;
+    if (SIM.selected === this) selectCtrl(null);
+  }
+  path(){
+    let n = [], p = this;
+    while (p){ n.unshift(p.type + "#" + p.id); p = p.parent; }
+    return n.join("/");
+  }
+}
+function rgba(v){
+  // 兼容三种形态: Lua Color 表(数字键 {1:r,2:g,3:b,4:a}) / JS 数组 / {r,g,b,a}
+  let a;
+  if (Array.isArray(v)) a = v;
+  else if (v && typeof v === "object") a = [v[1] !== undefined ? v[1] : v.r, v[2] !== undefined ? v[2] : v.g, v[3] !== undefined ? v[3] : v.b, v[4] !== undefined ? v[4] : (v.a == null ? 255 : v.a)];
+  else return [255, 255, 255, 255];
+  return [a[0] || 0, a[1] || 0, a[2] || 0, a[3] == null ? 255 : a[3]];
+}
+function css(c){
+  if (!c) return "transparent";
+  if (typeof c === "string") return c;
+  const a = rgba(c);
+  return `rgba(${a[0]|0},${a[1]|0},${a[2]|0},${(a[3] == null ? 255 : a[3])/255})`;
+}
+function ctrlOf(L, i){
+  const ud = lua.lua_touserdata(L, i);
+  return (ud && ud.__ctrl) || null;
+}
+/* 拖拽态：mousedown 命中控件后，document 级 mousemove 派发 CursorDrag、mouseup 兜底 CursorUp */
+const DRAG = { active: false, ctrl: null };
+document.addEventListener("mousemove", e => {
+  lastMousePos = uiPosOf(e);
+  if (DRAG.active && DRAG.ctrl) fireCursor(DRAG.ctrl, "CursorDrag", e);
+});
+document.addEventListener("mouseup", e => {
+  if (DRAG.active && DRAG.ctrl){ fireCursor(DRAG.ctrl, "CursorUp", e); }
+  DRAG.active = false; DRAG.ctrl = null;
+});
+function pushCtrl(L, ctrl){
+  if (!ctrl){ lua.lua_pushnil(L); return; }
+  const ud = lua.lua_newuserdata(L, 8);
+  ud.__ctrl = ctrl;
+  lua.lua_getfield(L, lreg, "SIMCTRL_MT"); // 由 setupCtrlBridge 预置到 registry
+  lua.lua_setmetatable(L, -2);
+}
+function fireCursor(ctrl, evName, domEv){
+  const arr = ctrl.listeners.cursor[evName]; if (!arr || !arr.length) return;
+  window.__dbgCursor = (window.__dbgCursor || 0) + 1;
+  window.__dbgLast = evName + "@" + ctrl.id;
+  const p = uiPosOf(domEv);
+  lastMousePos = p; // GetCursorUIPos 与事件坐标保持一致(dispatchEvent 测试时真实鼠标不在事件位置)
+  const L = SIM.L; if (!L) return;
+  // 事件表直接压栈并逐个派发; callRef 的 settop 语义由这里的 evIdx-1 负责——
+  // 旧实现每事件 luaL_ref+rawgeti 会泄漏一个栈槽和注册表项, 几千次事件后栈溢出 → Lua state PANIC → 全部输入死亡
+  lua.lua_createtable(L, 0, 1);
+  lua.lua_pushstring(L, to_luastring("GetUIPos"));
+  const x = p.x, y = p.y;
+  lua.lua_pushcfunction(L, cf(function(LL){ lua.lua_pushnumber(LL, x); lua.lua_pushnumber(LL, y); return 2; }));
+  lua.lua_rawset(L, -3);
+  const evIdx = lua.lua_gettop(L);
+  arr.forEach(ref => {
+    lua.lua_rawgeti(L, lreg, ref);       // handler 函数
+    lua.lua_pushvalue(L, evIdx);          // 事件表 (d)
+    if (lua.lua_pcall(L, 1, 0, 0) !== lua.LUA_OK){
+      const es = lua.lua_tostring(L, -1);
+      conLog("err", __i18n("[回调错误 ") + evName + "@" + ctrl.id + "] " + (es ? to_jsstring(es) : "?"));
+      lua.lua_settop(L, evIdx - 1);
+    }
+  });
+  lua.lua_settop(L, evIdx - 1);          // 弹出事件表, 栈严格平衡
+}
+function uiPosOf(domEv){
+  const vp = $("viewport").getBoundingClientRect();
+  const sc = vp.width / SIM.cw;
+  const x = (domEv.clientX - vp.left) / sc;
+  const y = SIM.ch - (domEv.clientY - vp.top) / sc;
+  return { x, y };
+}
+
+/* ───────────────────────── 3. 控件方法表 & metatable 桥 ───────────────────────── */
+const CTRL_METHODS = {
+  SetAnchorMin(c, a, b){ c.ax = a; c.ay = b; c.apply(); },
+  SetAnchorMax(c, a, b){ c.ax2 = a; c.ay2 = b; },
+  SetPivot(c, a, b){ c.px = a; c.py = b; c.apply(); },
+  SetAnchoredPosition(c, x, y){ c.x = x; c.y = y; c.apply(); },
+  GetAnchoredPosition(c){ return [[ "multi", c.x, c.y ]]; },
+  SetSizeDelta(c, w, h){ c.w = w; c.h = h; c.apply(); },
+  SetActive(c, b){ c.active = !!b; c.apply(); },
+  SetVisible(c, b){ c.visible = !!b; c.apply(); },
+  SetImage(c, src, assetId, col){ c.assetId = assetId; if (col) c.imageColor = rgba(col); c.apply(); },
+  SetFillUnused(){}, SetAsLastSibling(c){ (c.parent ? c.parent.div : $("viewport")).appendChild(c.div); },
+  SetLocalRotation(c, x, y, z){ c.rot = z || 0; c.apply(); },
+  SetLocalScale(c, x, y, z){ c.sx = x; c.sy = y; c.apply(); },
+  AddCursorEventListener(c, ev, fn){ (c.listeners.cursor[ev] = c.listeners.cursor[ev] || []).push(fn.__luafn || refOfTop()); },
+  AddNavigationEventListener(c, ev, fn){ SIM.navAll.push({ ctrl: c, type: ev, ref: fn && fn.__luafn }); },
+  AddKeyEventListener(c, ev, fn){ SIM.keyListeners.push({ type: ev, ref: fn && fn.__luafn }); },
+  SetControllerNavigation(c, dir, mode, target){ c.navCfg = c.navCfg || {}; c.navCfg[dir] = { mode: mode == null ? "NearestControl" : String(mode), target: target || null }; },
+  GetControllerNavigation(c, dir){ const cfg = (c.navCfg && c.navCfg[dir]) || { mode: "NearestControl", target: null }; return [["multiAny", cfg.mode, cfg.target ? { __simCtrl: cfg.target } : null]]; },
+  SimSetControllerFocus(c, t){ gameSetFocus(t); },
+  SimGetControllerFocus(c){ const f = gameGetFocus(); return [["multiAny", f ? { __simCtrl: f } : null]]; },
+  GetUIPos(c){ return [["multi", c.x, c.y]]; },
+};
+function refOfTop(){ return 0; } // 不应走到;见桥实现(直接用 luaL_ref)
+const CTRL_GETTERS = {
+  alive: c => true,
+  localScaleX: c => c.sx, localScaleY: c => c.sy,
+  anchoredPositionX: c => c.x, anchoredPositionY: c => c.y,
+  width: c => c.w, height: c => c.h,
+  // 引擎语义：这些属性读取永远返回非 nil 值（tankturmoil CheckTemplates 用 ~= nil 判型）
+  text: c => c.text || "",
+  raycastTarget: c => !!c.raycast,
+  interactable: c => c.interact !== false,
+  canControllerFocus: c => c.canFocus !== false,
+  fontSize: c => c.fontSize,
+  keyboardKeyCode: 0,
+  imageType: "Stretch",
+  adaptiveFontSize: false,
+  showCursor: true,
+  horizontalAlignment: c => c.alignH,
+  verticalAlignment: c => c.alignV,
+};
+const CTRL_SETTERS = {
+  text(c, v){ c.text = String(v ?? ""); c.apply(); },
+  fontSize(c, v){ c.fontSize = +v || 20; c.apply(); },
+  fontColor(c, v){ c.fcolor = rgba(v); c.apply(); },
+  bgColor(c, v){ c.bg = v ? rgba(v) : null; c.apply(); },
+  imageColor(c, v){ c.setProp("imageColor", v); },
+  raycastTarget(c, v){ c.raycast = !!v; c.apply(); },
+  interactable(c, v){ c.interact = !!v; }, canControllerFocus(c, v){ c.canFocus = !!v; },
+  adaptiveFontSize(){}, horizontalAlignment(c, v){ c.alignH = v; c.apply(); },
+  verticalAlignment(c, v){ c.alignV = v; c.apply(); },
+  imageType(){}, enableMask(){}, enableSoftEdge(){},
+  localScaleX(c, v){ c.sx = +v; c.apply(); }, localScaleY(c, v){ c.sy = +v; c.apply(); },
+  anchoredPositionX(c, v){ c.x = +v; c.apply(); }, anchoredPositionY(c, v){ c.y = +v; c.apply(); },
+  showCursor(){}, disableCursorEventPassthrough(){}, disableKeyEventPassthrough(){},
+};
+
+function setupCtrlBridge(L){
+  // metatable 放 registry, __index/__newindex 用 cfunction
+  lauxlib.luaL_newmetatable(L, to_luastring("SIMCTRL_MT"));
+  lua.lua_pushstring(L, to_luastring("__index"));
+  lua.lua_pushcfunction(L, cf(function(LL){
+    const c = ctrlOf(LL, 1); if (!c) return 0;
+    const k = aStr(LL, 2);
+    if (CTRL_METHODS[k]){
+      lua.lua_pushcfunction(LL, cf(function(L2){
+        const self = ctrlOf(L2, 1);
+        const args = [];
+        const isListener = k === "AddCursorEventListener" || k === "AddNavigationEventListener" || k === "AddKeyEventListener";
+        for (let i = 2; i <= lua.lua_gettop(L2); i++){
+          if (isListener && i === lua.lua_gettop(L2) && lua.lua_type(L2, i) === lua.LUA_TFUNCTION){
+            lua.lua_pushvalue(L2, i);
+            args.push({ __luafn: lauxlib.luaL_ref(L2, lreg) });
+          } else args.push(aVal(L2, i));
+        }
+        const r = CTRL_METHODS[k](self, ...args);
+        if (Array.isArray(r) && r[0] && (r[0][0] === "multi" || r[0][0] === "multiAny")){
+          r[0].slice(1).forEach(v => { if (r[0][0] === "multiAny" && v && v.__simCtrl) pushCtrl(L2, v.__simCtrl); else if (r[0][0] === "multiAny") pushVal(L2, v); else lua.lua_pushnumber(L2, v); });
+          return r[0].length - 1;
+        }
+        return 0;
+      }));
+      return 1;
+    }
+    if (k in CTRL_GETTERS){
+      const g = CTRL_GETTERS[k];
+      pushVal(LL, (typeof g === "function") ? g(c) : g);
+      return 1;
+    }
+    if (k in c.extra){ pushVal(LL, c.extra[k]); return 1; }
+    // 万能控件/动效控件：未知方法调用容错为 no-op（避免未收录 API 直接崩）
+    if (c.type === "auto" || c.type === "anim" || c.type === "fullscreen"){
+      lua.lua_pushcfunction(LL, cf(function(){ return 0; }));
+      return 1;
+    }
+    lua.lua_pushnil(LL); return 1;
+  }));
+  lua.lua_rawset(L, -3);
+  lua.lua_pushstring(L, to_luastring("__newindex"));
+  lua.lua_pushcfunction(L, cf(function(LL){
+    const c = ctrlOf(LL, 1); if (!c) return 0;
+    const k = aStr(LL, 2);
+    if (k in CTRL_SETTERS){ CTRL_SETTERS[k](c, aVal(LL, 3)); return 0; }
+    c.extra[k] = aVal(LL, 3); return 0;
+  }));
+  lua.lua_rawset(L, -3);
+  lua.lua_pop(L, 1);
+}
+
+/* ───────────────────────── 4. 宿主 API 注入：game/script/Enum/Color/typeof ───────────────────────── */
+function setupGlobals(L){
+  const G = (name, fn) => { lua.lua_pushcfunction(L, cf(fn)); lua.lua_setglobal(L, to_luastring(name)); };
+  const T = (name) => { lua.lua_createtable(L, 0, 16); lua.lua_pushvalue(L, -1); lua.lua_setglobal(L, to_luastring(name)); return name; };
+
+  /* ---- game 表 ---- */
+  lua.lua_createtable(L, 0, 24);
+  const gm = (name, fn) => { lua.lua_pushcfunction(L, cf(fn)); lua.lua_setfield(L, -2, to_luastring(name)); };
+
+  gm("GetUICanvasSize", LL => { lua.lua_pushnumber(LL, SIM.cw); lua.lua_pushnumber(LL, SIM.ch); return 2; });
+  gm("InstantiateClientUIControl", LL => {
+    const tplId = aNum(LL, 1);
+    const parent = ctrlOf(LL, 2) || SIM.root;
+    const t = TPL_MAP[tplId] || "auto";
+    const c = new UIControl(t, parent, tplId);
+    pushCtrl(LL, c); return 1;
+  });
+  gm("DestroyClientUIControl", LL => { const c = ctrlOf(LL, 1); if (c) c.destroy(); return 0; });
+  gm("GetCursorUIPos", LL => { const p = lastMousePos; lua.lua_pushnumber(LL, p.x); lua.lua_pushnumber(LL, p.y); return 2; });
+  gm("GetDevice", LL => { lua.lua_pushstring(LL, to_luastring(SIM.padMode ? "Controller" : "KeyboardAndMouse")); return 1; });
+  gm("GetControllerLeftStickAxis", LL => { const s = padStick(false); lua.lua_pushnumber(LL, s.x); lua.lua_pushnumber(LL, s.y); return 2; });
+  gm("GetControllerRightStickAxis", LL => { const s = padStick(true); lua.lua_pushnumber(LL, s.x); lua.lua_pushnumber(LL, s.y); return 2; });
+  gm("SetControllerFocus", LL => { gameSetFocus(ctrlOf(LL, 1)); return 0; });
+  gm("GetControllerFocus", LL => { pushCtrl(LL, gameGetFocus()); return 1; });
+  gm("PlayAudio2D", LL => { playSimSfx(aNum(LL, 1)); return 0; });
+  gm("GetGlobalCustomVariableValue", LL => {
+    const name = aStr(LL, 2);
+    const vars = loadSimVars();
+    if (!(name in vars)) return 0;
+    pushVal(LL, vars[name]); return 1;
+  });
+  gm("ServerSignal", LL => {
+    const name = aStr(LL, 1);
+    const args = [];
+    lua.lua_createtable(LL, 0, 6);
+    const sig = {
+      AddIntList(t){ args.push({ t: "il", v: lvArr(t == null ? [] : t).map(Number) }); },
+      AddFloatList(t){ args.push({ t: "fl", v: lvArr(t == null ? [] : t).map(Number) }); },
+      AddString(s){ args.push({ t: "s", v: String(s) }); },
+      AddInt(n){ args.push({ t: "i", v: Number(n) }); },
+      AddFloat(n){ args.push({ t: "f", v: Number(n) }); },
+      AddBool(b){ args.push({ t: "b", v: !!b }); },
+      SendSignal(){ sendSimSignal(name, args); },
+    };
+    // 构造 sig 对象 Lua table(每个方法独立闭包)
+    for (const k in sig){
+      lua.lua_pushstring(LL, to_luastring(k));
+      lua.lua_pushcfunction(LL, cf(makeSigMethod(k, name, args, sig[k])));
+      lua.lua_rawset(LL, -3);
+    }
+    return 1;
+  });
+  gm("Tween", LL => {
+    const c = ctrlOf(LL, 1);
+    const props = aVal(LL, 2) || {};
+    const dur = aOptNum(LL, 3, 0.2);
+    const tw = new SimTween(c, props, dur);
+    pushTween(LL, tw); return 1;
+  });
+  lua.lua_setglobal(L, to_luastring("game"));
+
+  /* ---- Color ---- */
+  lua.lua_createtable(L, 0, 4);
+  const colorFn = hasAlpha => function(LL){
+    const r = aNum(LL, 1) || 0, g = aNum(LL, 2) || 0, b = aNum(LL, 3) || 0;
+    const a = hasAlpha ? aOptNum(LL, 4, 255) : 255;
+    lua.lua_createtable(LL, 4, 0);
+    [r, g, b, a].forEach((v, i) => { lua.lua_pushnumber(LL, v); lua.lua_rawseti(LL, -2, i + 1); });
+    return 1;
+  };
+  lua.lua_pushcfunction(L, cf(colorFn(false))); lua.lua_setfield(L, -2, to_luastring("FromRGB"));
+  lua.lua_pushcfunction(L, cf(colorFn(true)));  lua.lua_setfield(L, -2, to_luastring("FromRGBA"));
+  lua.lua_setglobal(L, to_luastring("Color"));
+
+  /* ---- typeof ---- */
+  G("typeof", LL => {
+    const c = ctrlOf(LL, 1);
+    lua.lua_pushstring(LL, to_luastring(c ? (TYPENAME[c.type] || "ClientUIImageControl") : "nil"));
+    return 1;
+  });
+
+  /* ---- print / printerr ---- */
+  G("print", LL => {
+    const parts = [];
+    for (let i = 1; i <= lua.lua_gettop(LL); i++) parts.push(String(aVal(LL, i)));
+    conLog("print", parts.join(" "));
+    return 0;
+  });
+  G("printerr", LL => {
+    const parts = [];
+    for (let i = 1; i <= lua.lua_gettop(LL); i++) parts.push(String(aVal(LL, i)));
+    conLog("err", parts.join(" "));
+    return 0;
+  });
+
+  /* ---- math.isnan / isinf ---- */
+  lua.lua_getglobal(L, to_luastring("math"));
+  lua.lua_pushcfunction(L, cf(LL => { const v = aNum(LL, 1); lua.lua_pushboolean(LL, v !== v); return 1; }));
+  lua.lua_setfield(L, -2, to_luastring("isnan"));
+  lua.lua_pushcfunction(L, cf(LL => { const v = aNum(LL, 1); lua.lua_pushboolean(LL, !isFinite(v) && v === v); return 1; }));
+  lua.lua_setfield(L, -2, to_luastring("isinf"));
+  lua.lua_pop(L, 1);
+
+  /* ---- os.clock 覆写为虚拟时钟 ---- */
+  lua.lua_getglobal(L, to_luastring("os"));
+  lua.lua_pushcfunction(L, cf(LL => { lua.lua_pushnumber(LL, SIM.vclock); return 1; }));
+  lua.lua_setfield(L, -2, to_luastring("clock"));
+  lua.lua_pop(L, 1);
+
+  /* ---- Enum 树 ---- */
+  const ENUM_JS = {
+    ImageSource: { StaticReference: "StaticReference" },
+    ImageType: { Stretch: "Stretch", Sliced: "Sliced", Tiled: "Tiled" },
+    EaseType: { Linear: "Linear", InQuad: "InQuad", OutQuad: "OutQuad", InOutQuad: "InOutQuad", InCubic: "InCubic", OutCubic: "OutCubic", InBack: "InBack", OutBack: "OutBack", OutElastic: "OutElastic", OutBounce: "OutBounce" },
+    CursorEventType: { CursorClick: "CursorClick", CursorDown: "CursorDown", CursorUp: "CursorUp", CursorDrag: "CursorDrag", CursorEnter: "CursorEnter", CursorExit: "CursorExit" },
+    Device: { KeyboardAndMouse: "Enum.Device.KeyboardAndMouse", Mobile: "Enum.Device.Mobile", MobileController: "Enum.Device.MobileController", Controller: "Enum.Device.Controller", Gamepad: "Enum.Device.Gamepad", Console: "Enum.Device.Console" },
+    ControllerNavigationEventType: { Confirm: "Confirm", Cancel: "Cancel", Focus: "Focus", LostFocus: "LostFocus", LeftStickUp: "LeftStickUp", LeftStickDown: "LeftStickDown", LeftStickLeft: "LeftStickLeft", LeftStickRight: "LeftStickRight", RightStickUp: "RightStickUp", RightStickDown: "RightStickDown", RightStickRight: "RightStickRight", RightStickLeft: "RightStickLeft" },
+    ControllerNavigationDir: { Up: "Up", Down: "Down", Left: "Left", Right: "Right" },
+    ControllerNavigationMode: { None: "None", NearestControl: "NearestControl", Specified: "Specified" },
+    KeyEventType: {
+      KeyboardMoveForwardKeyDown: "KeyboardMoveForwardKeyDown", KeyboardMoveForwardKeyUp: "KeyboardMoveForwardKeyUp", KeyboardMoveBackwardKeyDown: "KeyboardMoveBackwardKeyDown", KeyboardMoveBackwardKeyUp: "KeyboardMoveBackwardKeyUp", KeyboardMoveLeftKeyDown: "KeyboardMoveLeftKeyDown", KeyboardMoveLeftKeyUp: "KeyboardMoveLeftKeyUp", KeyboardMoveRightKeyDown: "KeyboardMoveRightKeyDown", KeyboardMoveRightKeyUp: "KeyboardMoveRightKeyUp", KeyboardJumpKeyDown: "KeyboardJumpKeyDown", KeyboardJumpKeyUp: "KeyboardJumpKeyUp", KeyboardSprintKeyDown: "KeyboardSprintKeyDown", KeyboardSprintKeyUp: "KeyboardSprintKeyUp", KeyboardInteractKeyDown: "KeyboardInteractKeyDown", KeyboardInteractKeyUp: "KeyboardInteractKeyUp", KeyboardNormalAttackKeyDown: "KeyboardNormalAttackKeyDown", KeyboardNormalAttackKeyUp: "KeyboardNormalAttackKeyUp", KeyboardMenuConfirmKeyDown: "KeyboardMenuConfirmKeyDown", KeyboardMenuConfirmKeyUp: "KeyboardMenuConfirmKeyUp", KeyboardMenuBackKeyDown: "KeyboardMenuBackKeyDown", KeyboardMenuBackKeyUp: "KeyboardMenuBackKeyUp", KeyboardCraftspersonKey1Down: "KeyboardCraftspersonKey1Down", KeyboardCraftspersonKey1Up: "KeyboardCraftspersonKey1Up", KeyboardCraftspersonKey2Down: "KeyboardCraftspersonKey2Down", KeyboardCraftspersonKey2Up: "KeyboardCraftspersonKey2Up", KeyboardCraftspersonKey3Down: "KeyboardCraftspersonKey3Down", KeyboardCraftspersonKey3Up: "KeyboardCraftspersonKey3Up", KeyboardCraftspersonKey4Down: "KeyboardCraftspersonKey4Down", KeyboardCraftspersonKey4Up: "KeyboardCraftspersonKey4Up", KeyboardCraftspersonKey5Down: "KeyboardCraftspersonKey5Down", KeyboardCraftspersonKey5Up: "KeyboardCraftspersonKey5Up", KeyboardCraftspersonKey6Down: "KeyboardCraftspersonKey6Down", KeyboardCraftspersonKey6Up: "KeyboardCraftspersonKey6Up", KeyboardCraftspersonKey7Down: "KeyboardCraftspersonKey7Down", KeyboardCraftspersonKey7Up: "KeyboardCraftspersonKey7Up", KeyboardCraftspersonKey8Down: "KeyboardCraftspersonKey8Down", KeyboardCraftspersonKey8Up: "KeyboardCraftspersonKey8Up", KeyboardCraftspersonKey9Down: "KeyboardCraftspersonKey9Down", KeyboardCraftspersonKey9Up: "KeyboardCraftspersonKey9Up", KeyboardCraftspersonKey10Down: "KeyboardCraftspersonKey10Down", KeyboardCraftspersonKey10Up: "KeyboardCraftspersonKey10Up", KeyboardCraftspersonKey11Down: "KeyboardCraftspersonKey11Down", KeyboardCraftspersonKey11Up: "KeyboardCraftspersonKey11Up", KeyboardCraftspersonKey12Down: "KeyboardCraftspersonKey12Down", KeyboardCraftspersonKey12Up: "KeyboardCraftspersonKey12Up", KeyboardCraftspersonKey13Down: "KeyboardCraftspersonKey13Down", KeyboardCraftspersonKey13Up: "KeyboardCraftspersonKey13Up", KeyboardCraftspersonKey14Down: "KeyboardCraftspersonKey14Down", KeyboardCraftspersonKey14Up: "KeyboardCraftspersonKey14Up", KeyboardCraftspersonKey15Down: "KeyboardCraftspersonKey15Down", KeyboardCraftspersonKey15Up: "KeyboardCraftspersonKey15Up", KeyboardCraftspersonKey16Down: "KeyboardCraftspersonKey16Down", KeyboardCraftspersonKey16Up: "KeyboardCraftspersonKey16Up", KeyboardCraftspersonKey17Down: "KeyboardCraftspersonKey17Down", KeyboardCraftspersonKey17Up: "KeyboardCraftspersonKey17Up", KeyboardCraftspersonKey18Down: "KeyboardCraftspersonKey18Down", KeyboardCraftspersonKey18Up: "KeyboardCraftspersonKey18Up", KeyboardCraftspersonKey19Down: "KeyboardCraftspersonKey19Down", KeyboardCraftspersonKey19Up: "KeyboardCraftspersonKey19Up", KeyboardCraftspersonKey20Down: "KeyboardCraftspersonKey20Down", KeyboardCraftspersonKey20Up: "KeyboardCraftspersonKey20Up", KeyboardCraftspersonKey21Down: "KeyboardCraftspersonKey21Down", KeyboardCraftspersonKey21Up: "KeyboardCraftspersonKey21Up", KeyboardCraftspersonKey22Down: "KeyboardCraftspersonKey22Down", KeyboardCraftspersonKey22Up: "KeyboardCraftspersonKey22Up", KeyboardCraftspersonKey23Down: "KeyboardCraftspersonKey23Down", KeyboardCraftspersonKey23Up: "KeyboardCraftspersonKey23Up", KeyboardCraftspersonKey24Down: "KeyboardCraftspersonKey24Down", KeyboardCraftspersonKey24Up: "KeyboardCraftspersonKey24Up", KeyboardCraftspersonKey25Down: "KeyboardCraftspersonKey25Down", KeyboardCraftspersonKey25Up: "KeyboardCraftspersonKey25Up", KeyboardCraftspersonKey26Down: "KeyboardCraftspersonKey26Down", KeyboardCraftspersonKey26Up: "KeyboardCraftspersonKey26Up", KeyboardCraftspersonKey27Down: "KeyboardCraftspersonKey27Down", KeyboardCraftspersonKey27Up: "KeyboardCraftspersonKey27Up", KeyboardCraftspersonKey28Down: "KeyboardCraftspersonKey28Down", KeyboardCraftspersonKey28Up: "KeyboardCraftspersonKey28Up", KeyboardCraftspersonKey29Down: "KeyboardCraftspersonKey29Down", KeyboardCraftspersonKey29Up: "KeyboardCraftspersonKey29Up", KeyboardCraftspersonKey30Down: "KeyboardCraftspersonKey30Down", KeyboardCraftspersonKey30Up: "KeyboardCraftspersonKey30Up", KeyboardCraftspersonKey31Down: "KeyboardCraftspersonKey31Down", KeyboardCraftspersonKey31Up: "KeyboardCraftspersonKey31Up", KeyboardCraftspersonKey32Down: "KeyboardCraftspersonKey32Down", KeyboardCraftspersonKey32Up: "KeyboardCraftspersonKey32Up", ControllerJumpKeyDown: "ControllerJumpKeyDown", ControllerJumpKeyUp: "ControllerJumpKeyUp", ControllerSprintKeyDown: "ControllerSprintKeyDown", ControllerSprintKeyUp: "ControllerSprintKeyUp", ControllerInteractKeyDown: "ControllerInteractKeyDown", ControllerInteractKeyUp: "ControllerInteractKeyUp", ControllerNormalAttackKeyDown: "ControllerNormalAttackKeyDown", ControllerNormalAttackKeyUp: "ControllerNormalAttackKeyUp", ControllerCharacterSkill1KeyDown: "ControllerCharacterSkill1KeyDown", ControllerCharacterSkill1KeyUp: "ControllerCharacterSkill1KeyUp", ControllerCharacterSkill2KeyDown: "ControllerCharacterSkill2KeyDown", ControllerCharacterSkill2KeyUp: "ControllerCharacterSkill2KeyUp", ControllerCharacterSkill3KeyDown: "ControllerCharacterSkill3KeyDown", ControllerCharacterSkill3KeyUp: "ControllerCharacterSkill3KeyUp", ControllerCharacterSkill4KeyDown: "ControllerCharacterSkill4KeyDown", ControllerCharacterSkill4KeyUp: "ControllerCharacterSkill4KeyUp", ControllerMenuConfirmKeyDown: "ControllerMenuConfirmKeyDown", ControllerMenuConfirmKeyUp: "ControllerMenuConfirmKeyUp", ControllerMenuBackKeyDown: "ControllerMenuBackKeyDown", ControllerMenuBackKeyUp: "ControllerMenuBackKeyUp", ControllerCraftspersonKey1Down: "ControllerCraftspersonKey1Down", ControllerCraftspersonKey1Up: "ControllerCraftspersonKey1Up", ControllerCraftspersonKey2Down: "ControllerCraftspersonKey2Down", ControllerCraftspersonKey2Up: "ControllerCraftspersonKey2Up", ControllerCraftspersonKey3Down: "ControllerCraftspersonKey3Down", ControllerCraftspersonKey3Up: "ControllerCraftspersonKey3Up", ControllerCraftspersonKey4Down: "ControllerCraftspersonKey4Down", ControllerCraftspersonKey4Up: "ControllerCraftspersonKey4Up", ControllerCraftspersonKey5Down: "ControllerCraftspersonKey5Down", ControllerCraftspersonKey5Up: "ControllerCraftspersonKey5Up", ControllerCraftspersonKey6Down: "ControllerCraftspersonKey6Down", ControllerCraftspersonKey6Up: "ControllerCraftspersonKey6Up", ControllerCraftspersonKey7Down: "ControllerCraftspersonKey7Down", ControllerCraftspersonKey7Up: "ControllerCraftspersonKey7Up", ControllerCraftspersonKey8Down: "ControllerCraftspersonKey8Down", ControllerCraftspersonKey8Up: "ControllerCraftspersonKey8Up", ControllerCraftspersonKey9Down: "ControllerCraftspersonKey9Down", ControllerCraftspersonKey9Up: "ControllerCraftspersonKey9Up", ControllerCraftspersonKey10Down: "ControllerCraftspersonKey10Down", ControllerCraftspersonKey10Up: "ControllerCraftspersonKey10Up", ControllerCraftspersonKey11Down: "ControllerCraftspersonKey11Down", ControllerCraftspersonKey11Up: "ControllerCraftspersonKey11Up", ControllerCraftspersonKey12Down: "ControllerCraftspersonKey12Down", ControllerCraftspersonKey12Up: "ControllerCraftspersonKey12Up", ControllerCraftspersonKey13Down: "ControllerCraftspersonKey13Down", ControllerCraftspersonKey13Up: "ControllerCraftspersonKey13Up", ControllerCraftspersonKey14Down: "ControllerCraftspersonKey14Down", ControllerCraftspersonKey14Up: "ControllerCraftspersonKey14Up"
+    },
+    ControllerKeyCode: { CraftspersonKey1: "CraftspersonKey1", CraftspersonKey2: "CraftspersonKey2", CraftspersonKey3: "CraftspersonKey3", CraftspersonKey4: "CraftspersonKey4", CraftspersonKey5: "CraftspersonKey5", CraftspersonKey6: "CraftspersonKey6", CraftspersonKey7: "CraftspersonKey7", CraftspersonKey8: "CraftspersonKey8", CraftspersonKey9: "CraftspersonKey9", CraftspersonKey10: "CraftspersonKey10", CraftspersonKey11: "CraftspersonKey11", CraftspersonKey12: "CraftspersonKey12", CraftspersonKey13: "CraftspersonKey13", CraftspersonKey14: "CraftspersonKey14", SprintKey: "SprintKey", JumpKey: "JumpKey", InteractKey: "InteractKey", NormalAttackKey: "NormalAttackKey", CharacterSkill1Key: "CharacterSkill1Key", CharacterSkill2Key: "CharacterSkill2Key", CharacterSkill3Key: "CharacterSkill3Key", CharacterSkill4Key: "CharacterSkill4Key", MenuConfirmKey: "MenuConfirmKey", MenuBackKey: "MenuBackKey", None: "None" },
+    TextHorizontalAlignment: { Middle: "Middle", Left: "Left", Right: "Right" },
+    TextVerticalAlignment: { Middle: "Middle", Top: "Top", Bottom: "Bottom" },
+    CustomVariableEntityType: { PlayerSelf: "PlayerSelf", Level: "Level", AvatarSelf: "AvatarSelf" },
+  };
+  pushVal(L, ENUM_JS); lua.lua_setglobal(L, to_luastring("Enum"));
+
+  /* ---- script ---- */
+  lua.lua_createtable(L, 0, 6);
+  lua.lua_pushstring(L, to_luastring("alive")); lua.lua_pushboolean(L, true); lua.lua_rawset(L, -3);
+  lua.lua_pushstring(L, to_luastring("path")); lua.lua_pushstring(L, to_luastring(SIM.lastFileName || "imported.lua")); lua.lua_rawset(L, -3);
+  lua.lua_pushcfunction(L, cf(function(LL){ SIM.updateEnabled = aBool(LL, 2); return 0; }));
+  lua.lua_setfield(L, -2, to_luastring("EnableUpdate"));
+  lua.lua_pushcfunction(L, cf(function(LL){
+    const name = aStr(LL, 2);
+    lua.lua_pushvalue(LL, 3);
+    const ref = lauxlib.luaL_ref(LL, lreg);
+    if (!SIM.sigHandlers.has(name)) SIM.sigHandlers.set(name, []);
+    SIM.sigHandlers.get(name).push(ref);
+    refreshSignalPanel();
+    return 0;
+  }));
+  lua.lua_setfield(L, -2, to_luastring("RegisterServerSignalHandler"));
+  pushCtrl(L, SIM.root); lua.lua_setfield(L, -2, to_luastring("object"));
+  lua.lua_setglobal(L, to_luastring("script"));
+}
+
+function lvArr(v){
+  if (Array.isArray(v)) return v.map(lvArr);
+  if (v && typeof v === "object"){
+    const ks = Object.keys(v);
+    const isList = ks.length > 0 && ks.every(k => String(Number(k)) === k && Number(k) >= 1);
+    if (isList){ const a = []; ks.forEach(k => { a[Number(k) - 1] = lvArr(v[k]); }); return a; }
+    const o = {}; ks.forEach(k => { o[k] = lvArr(v[k]); }); return o;
+  }
+  return v;
+}
+/* ServerSignal 方法生成的独立闭包(修正占位撤销问题) */
+function makeSigMethod(mname, sigName, args, impl){
+  return function(LL){
+    try {
+      const top = lua.lua_gettop(LL);
+      const v = aVal(LL, top >= 2 ? 2 : 1);  // 冒号调用: 1=self, 2=参数; 点调用: 1=参数
+      impl(v);
+      return 0;
+    } catch(e){ return lauxlib.luaL_error(LL, to_luastring("[SIM sig] " + e.message)); }
+  };
+}
+function sendSimSignal(name, args){
+  SIM.sigLog.unshift({ t: Date.now(), name, args });
+  if (SIM.sigLog.length > 60) SIM.sigLog.pop();
+  // 自动存档回声
+  if ($("autoEcho").checked){
+    if (name.endsWith("_Save")){
+      SIM.sigStore.set(name.slice(0, -5), args.map(a => a.v));
+    } else if (name.endsWith("_Load")){
+      const base = name.slice(0, -5);
+      const backName = base + "_LoadBack";
+      const hs = SIM.sigHandlers.get(backName);
+      const stored = SIM.sigStore.get(base);
+      if (hs && hs.length && stored){
+        conLog("sys", `${__i18n("[服务器模拟] ")}${name}${__i18n(" → 自动回执 ")}${backName}(${stored.map(s => JSON.stringify(s)).slice(0,2).join(", ")}…)`);
+        hs.forEach(ref => callRef(ref, [null, stored], backName));
+      }
+    }
+  }
+  refreshSignalPanel();
+}
+
+/* ───────────────────────── 5. Tween 引擎(虚拟时钟) ───────────────────────── */
+const TWEENS = [];
+const EASE = {
+  Linear: t => t,
+  InQuad: t => t*t, OutQuad: t => 1-(1-t)*(1-t), InOutQuad: t => t<.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2,
+  InCubic: t => t*t*t, OutCubic: t => 1-Math.pow(1-t,3),
+  InBack: t => 2.70158*t*t*t - 1.70158*t*t,
+  OutBack: t => { const c=1.70158; return 1 + (c+1)*Math.pow(t-1,3) + c*Math.pow(t-1,2); },
+  OutElastic: t => t===0?0 : t===1?1 : Math.pow(2,-10*t)*Math.sin((t*10-0.75)*(2*Math.PI/3))+1,
+  OutBounce: t => { const n=7.5625, d=2.75; if(t<1/d) return n*t*t; if(t<2/d){t-=1.5/d; return n*t*t+.75;} if(t<2.5/d){t-=2.25/d; return n*t*t+.9375;} t-=2.625/d; return n*t*t+.984375; },
+};
+class SimTween {
+  constructor(ctrl, props, dur){
+    this.ctrl = ctrl; this.dur = Math.max(0.016, dur); this.ease = "Linear";
+    this.onComplete = null; this.playing = false; this.t0 = 0;
+    this.props = {};
+    for (const k in props){
+      let v = props[k];
+      if (k === "imageColor" || k === "fontColor" || k === "bgColor"){
+        const src = ctrl[k === "imageColor" ? "imageColor" : k === "fontColor" ? "fcolor" : "bg"] || [255,255,255,255];
+        const dst = Array.isArray(v) ? v : [255,255,255,255];
+        this.props[k] = { from: rgba(src), to: rgba(dst), color: true };
+      } else if (typeof v === "number" && isFinite(v)){
+        this.props[k] = { from: null, to: v }; // from 在 play 时取当前值
+      }
+    }
+    TWEENS.push(this);
+  }
+  SetEase(e){ this.ease = (typeof e === "string" ? e : String(e || "Linear")); return this; }
+  SetOnComplete(fn){ if (fn && fn.__luafn !== undefined) this.onComplete = fn.__luafn; return this; }
+  Play(){ this.capture(); this.t0 = SIM.vclock; this.playing = true; return this; }
+  Kill(){ this.playing = false; const i = TWEENS.indexOf(this); if (i >= 0) TWEENS.splice(i, 1); }
+  capture(){ for (const k in this.props){ const p = this.props[k]; if (!p.color && p.from === null){
+    p.from = k === "anchoredPositionX" ? this.ctrl.x : k === "anchoredPositionY" ? this.ctrl.y :
+             k === "localScaleX" ? this.ctrl.sx : k === "localScaleY" ? this.ctrl.sy : 0;
+  }}}
+  tick(now){
+    if (!this.playing || !this.ctrl || !this.ctrl.div) return;
+    let k = (now - this.t0) / this.dur; if (k > 1) k = 1;
+    const e = (EASE[this.ease] || EASE.Linear)(k);
+    for (const key in this.props){
+      const p = this.props[key];
+      if (p.color){
+        const c = [0,1,2,3].map(i => p.from[i] + (p.to[i]-p.from[i]) * e);
+        if (key === "imageColor") this.ctrl.setProp("imageColor", c);
+      } else {
+        const v = p.from + (p.to - p.from) * e;
+        this.ctrl.setProp(key, v);
+      }
+    }
+    if (k >= 1){ this.playing = false; if (this.onComplete){ const r = this.onComplete; this.onComplete = null; callRef(r, [], "tween-done"); } }
+  }
+}
+function tickTweens(now){ for (let i = TWEENS.length - 1; i >= 0; i--){ const t = TWEENS[i]; t.tick(now); if (!t.playing) TWEENS.splice(i, 1); } }
+function pushTween(L, tw){
+  lua.lua_createtable(L, 0, 5);
+  const setF = (k, fn) => { lua.lua_pushstring(L, to_luastring(k)); lua.lua_pushcfunction(L, cf(function(LL){
+    // 支持冒号调用: 首参是 self table, 实参在 2
+    const v = aVal(LL, 2); const r = fn(v); if (r !== undefined) {} return 0;
+  })); lua.lua_rawset(L, -3); };
+  setF("SetEase", v => { tw.ease = String(v || "Linear"); });
+  setF("SetOnComplete", v => { if (v && v.__luafn !== undefined) tw.onComplete = v.__luafn; });
+  lua.lua_pushstring(L, to_luastring("Play"));
+  lua.lua_pushcfunction(L, cf(function(){ tw.Play(); return 0; }));
+  lua.lua_rawset(L, -3);
+  lua.lua_pushstring(L, to_luastring("Kill"));
+  lua.lua_pushcfunction(L, cf(function(){ tw.Kill(); return 0; }));
+  lua.lua_rawset(L, -3);
+}
+
+/* ───────────────────────── 6. 输入桥(键鼠/手柄) ───────────────────────── */
+let lastMousePos = { x: 0, y: 0 };
+function padStick(right){
+  let bx = 0, by = 0;
+  try {
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    for (const p of pads){
+      if (!p || !p.connected) continue;
+      bx = right ? (p.axes[2] || 0) : (p.axes[0] || 0);
+      by = right ? -(p.axes[3] || 0) : -(p.axes[1] || 0);
+      break;
+    }
+  } catch(e){}
+  if (!right && SIM.vstick && (Math.abs(SIM.vstick.x) + Math.abs(SIM.vstick.y)) > (Math.abs(bx) + Math.abs(by))){ bx = SIM.vstick.x; by = SIM.vstick.y; }
+  return { x: bx, y: by };
+}
+function fireNavAt(ctrl, type){
+  if (!ctrl) return;
+  SIM.navAll.slice().forEach(n => { if (n.ctrl === ctrl && n.type === type && n.ref) { try { callRef(n.ref, [undefined], "nav:" + type); } catch(e){} } });
+}
+function gameGetFocus(){
+  let f = SIM.focusCtrl;
+  if (f && (f.alive === false || !f.div || !f.div.isConnected)) { SIM.focusCtrl = null; f = null; }
+  return f;
+}
+function gameSetFocus(c){
+  if (SIM.focusBusy) { SIM.focusCtrl = c || SIM.focusCtrl; return SIM.focusCtrl; }
+  const old = gameGetFocus();
+  if (old === c) return c;
+  SIM.focusBusy = true;
+  try {
+    if (old && old.div) old.div.classList.remove("simfocus");
+    SIM.focusCtrl = c || null;
+    if (c && c.div) c.div.classList.add("simfocus");
+    if (old) fireNavAt(old, "LostFocus");
+    if (c) fireNavAt(c, "Focus");
+  } finally { SIM.focusBusy = false; }
+  return c;
+}
+function ensureFocus(){ return gameGetFocus() || (function(){
+  let first = null;
+  try {
+    SIM.ctrls.forEach(c => {
+      if (first) return;
+      const clickable = c.listeners && c.listeners.cursor && (c.listeners.cursor.CursorClick || []).length > 0;
+      if (c.canFocus === false && !clickable) return;
+      if (c.interact === false && !clickable) return;
+      if (c.active === false || c.visible === false || !c.div) return;
+      const r = c.div.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return;
+      if (c.type === "cursor" || r.width > innerWidth * 0.9) return;
+      first = c;
+    });
+  } catch(e){}
+  return first ? gameSetFocus(first) : null;
+})(); }
+const NAV_DIR = { LeftStickUp: "Up", LeftStickDown: "Down", LeftStickLeft: "Left", LeftStickRight: "Left".replace("Left", "Right") };
+NAV_DIR.LeftStickRight = "Right";
+function fireNav(type){
+  // 真机语义：导航事件只投递给当前聚焦控件；方向事件先按导航配置决定是否移动焦点
+  const f = ensureFocus();
+  if (!f) return;
+  const DIRMAP = { LeftStickUp: "Up", LeftStickDown: "Down", LeftStickLeft: "Left", LeftStickRight: "Right" };
+  const dir = DIRMAP[type];
+  if (dir){
+    const cfg = (f.navCfg && f.navCfg[dir]) || { mode: "NearestControl", target: null };
+    if (cfg.mode === "NearestControl") padFocusMoveDir(dir);
+    else if (cfg.mode === "Specified" && cfg.target) gameSetFocus(cfg.target);
+  }
+  fireNavAt(SIM.focusCtrl || f, type);
+}
+function fireKey(type){
+  // 真机语义：回调返回 true=已处理，同容器内后续监听不再响应
+  for (const k of SIM.keyListeners.slice()){
+    if (k.type !== type || !k.ref) continue;
+    let handled = false;
+    try {
+      const L = SIM.L;
+      if (L){
+        lua.lua_rawgeti(L, lreg, k.ref);
+        const ok = lua.lua_pcall(L, 0, 1, 0);
+        if (ok === lua.LUA_OK){ handled = lua.lua_toboolean(L, -1); lua.lua_pop(L, 1); }
+        else { const es = lua.lua_tostring(L, -1); conLog("err", __i18n("[回调错误 ") + "key:" + type + "@" + (es ? to_jsstring(es) : "?")); lua.lua_pop(L, 1); }
+      }
+    } catch(e){}
+    if (handled) break;
+  }
+}
+const VDIR = { w: [0, 1], arrowup: [0, 1], s: [0, -1], arrowdown: [0, -1], a: [-1, 0], arrowleft: [-1, 0], d: [1, 0], arrowright: [1, 0] };
+const VHELD = new Set();
+function setVstick(k, on){
+  if (!VDIR[k]) return;
+  if (on) VHELD.add(k); else VHELD.delete(k);
+  let x = 0, y = 0;
+  VHELD.forEach(kk => { x += VDIR[kk][0]; y += VDIR[kk][1]; });
+  SIM.vstick = { x: Math.max(-1, Math.min(1, x)), y: Math.max(-1, Math.min(1, y)) };
+}
+const KEYMAP = {
+  "w": "KeyboardMoveForwardKeyDown", "arrowup": "KeyboardMoveForwardKeyDown",
+  "s": "KeyboardMoveBackwardKeyDown", "arrowdown": "KeyboardMoveBackwardKeyDown",
+  "a": "KeyboardMoveLeftKeyDown", "arrowleft": "KeyboardMoveLeftKeyDown",
+  "d": "KeyboardMoveRightKeyDown", "arrowright": "KeyboardMoveRightKeyDown",
+  "r": "KeyboardCraftspersonKey42Down",
+  "escape": "ControllerMenuBackKeyDown",
+};
+const PADNAV = {
+  KeyboardMoveForwardKeyDown: "LeftStickUp", KeyboardMoveBackwardKeyDown: "LeftStickDown",
+  KeyboardMoveLeftKeyDown: "LeftStickLeft", KeyboardMoveRightKeyDown: "LeftStickRight"
+};
+function padFocusMove(key) {
+  const DV = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
+    w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0] }[key] || null;
+  padFocusMoveDV(DV);
+}
+function padFocusMoveDir(dir) {
+  padFocusMoveDV({ Up: [0, -1], Down: [0, 1], Left: [-1, 0], Right: [1, 0] }[dir] || null);
+}
+function padFocusMoveDV(DV) {
+  if (!DV) return;
+  let cx = innerWidth / 2, cy = innerHeight / 2;
+  if (SIM.focusCtrl && SIM.focusCtrl.div) {
+    const r = SIM.focusCtrl.div.getBoundingClientRect();
+    if (r.width > 0) { cx = r.x + r.width / 2; cy = r.y + r.height / 2; }
+  }
+  let best = null, bd = 1e9;
+  SIM.ctrls.forEach(c => {
+    const clickable = c.listeners && c.listeners.cursor && (c.listeners.cursor.CursorClick || []).length > 0;
+    if (c.canFocus === false && !clickable) return;
+    if (c.interact === false && !clickable) return;
+    if (!c.div || c === SIM.focusCtrl) return;
+    if (c.active === false || c.visible === false) return;
+    if (c.type === "cursor") return;  // 区域型不参与焦点
+    const r = c.div.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return;
+    const dx = (r.x + r.width / 2) - cx, dy = (r.y + r.height / 2) - cy;
+    const dot = dx * DV[0] + dy * DV[1];
+    if (dot <= 4) return;
+    const off = Math.abs(dx * DV[1]) + Math.abs(dy * DV[0]);
+    const d = dot + off * 0.35;
+    if (d < bd) { bd = d; best = c; }
+  });
+  if (best) { gameSetFocus(best); try { best.div.scrollIntoView({ block: "nearest" }); } catch(e){} }
+}
+$("btnPadMode").onclick = () => {
+  SIM.padMode = !SIM.padMode;
+  const b = $("btnPadMode");
+  b.textContent = __i18n("🎮 手柄:") + (SIM.padMode ? __i18n("开") : __i18n("关"));
+  b.classList.toggle("primary", SIM.padMode);
+  try { conLog("sys", __i18n("手柄模式 ") + (SIM.padMode ? __i18n("开启：GetDevice=Controller，WASD/方向键=左摇杆，Enter=A") : __i18n("关闭"))); } catch(e){}
+};
+const KEYUPMAP = {
+  "w": "KeyboardMoveForwardKeyUp", "arrowup": "KeyboardMoveForwardKeyUp",
+  "s": "KeyboardMoveBackwardKeyUp", "arrowdown": "KeyboardMoveBackwardKeyUp",
+  "a": "KeyboardMoveLeftKeyUp", "arrowleft": "KeyboardMoveLeftKeyUp",
+  "d": "KeyboardMoveRightKeyUp", "arrowright": "KeyboardMoveRightKeyUp",
+  "r": "KeyboardCraftspersonKey42Up", "escape": "ControllerMenuBackKeyUp",
+};
+window.addEventListener("keydown", e => {
+  if (e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT") return;
+  const k = e.key.toLowerCase();
+  if (KEYMAP[k]){
+    fireKey(KEYMAP[k]);  // 移动键一律走键盘语义（OS 自带重复；lua 端按连发节奏处理）
+    setVstick(k, true);
+    if (!k.startsWith("arrow")) e.preventDefault(); return;
+  }
+  if (k === "enter" || k === " "){ padConfirm(); e.preventDefault(); return; }
+  if (k === "f5"){ e.preventDefault(); $("btnRun").click(); }
+  if (k === "f8"){ e.preventDefault(); if (!$("btnPause").disabled) $("btnPause").click(); }
+  if (k === "f9"){ e.preventDefault(); if (!$("btnStep").disabled) $("btnStep").click(); }
+});
+window.addEventListener("keyup", e => {
+  const k = e.key.toLowerCase();
+  if (KEYMAP[k]){ if (KEYUPMAP[k]) fireKey(KEYUPMAP[k]); setVstick(k, false); }
+  if (k === "arrowup") fireNav("LeftStickUp");
+  else if (k === "arrowdown") fireNav("LeftStickDown");
+  else if (k === "arrowleft") fireNav("LeftStickLeft");
+  else if (k === "arrowright") fireNav("LeftStickRight");
+});
+window.addEventListener("gamepadconnected", () => conLog("sys", __i18n("[手柄] 已连接")));
+window.addEventListener("gamepaddisconnected", () => conLog("sys", __i18n("[手柄] 已断开")));
+// （原 50ms 广播轮询已移除：广播会同时点燃屏上所有按钮的 Confirm/Cancel/LeftStick 监听，
+//   与 padBtnPoll 定向投递双触发 → 换关/开始混乱。手柄输入统一由 loopStep 里的 padBtnPoll 处理。）
+document.addEventListener("mousemove", e => { lastMousePos = uiPosOf(e); });
+document.addEventListener("click", e => { // 视口内点击 → 自动选中
+  if (!$("autoFocusInspector").checked) return;
+  const el = e.target.closest ? e.target.closest(".sim-ctrl") : null;
+  if (el && $("viewportWrap").contains(el)){ const c = SIM.ctrls.get(+el.dataset.cid); if (c) selectCtrl(c); }
+});
+
+/* ───────────────────────── 7. 素材程序化绘制库 ───────────────────────── */
+const ASSET_SUMMARY = {100001:"\u7eaf\u8272\u65b9\u5757\uff08\u767d\u56fe\uff0c\u7528\u4e8e\u8272\u5757/\u5e95\u677f\uff09",100004:"\u95ea\u5149 sparkles",104002:"\u56db\u8292\u661f\u5927\u661f star",103137:"\u5956\u7ae0 medal",100125:"\u5bf9\u52fe\u5706\u73af checkRing",100169:"\u9501 lock",105115:"\u7687\u51a0 crown",106060:"\u6697\u89d2\u6e10\u6655 vignette",107001:"\u6df1\u84dd\u661f\u7a7a\u5e95 sky",107070:"\u661f\u5f62\u6807\u9898\u6761 titleBar",107053:"\u68d5\u91d1\u4e3b\u6309\u94ae btnMain",107054:"\u68d5\u91d1\u526f\u6309\u94ae btnSub",107253:"\u7c73\u767d\u91d1\u6846\u5956\u52b1\u5361 questCard",107132:"\u84dd\u8272\u4e16\u754c\u4e3b\u9898\u80cc\u666f bgBlue",107134:"\u7d2b\u8272\u4e16\u754c\u4e3b\u9898\u80cc\u666f bgPurple",107136:"\u7eff\u8272\u4e16\u754c\u4e3b\u9898\u80cc\u666f bgGreen"}; // 由构建脚本注入 {id: __i18n("描述")}
+const AssetPainter = (() => {
+  const cache = new Map();
+  function paint(id, colorArr){
+    const key = id + "|" + colorArr.join(",");
+    if (cache.has(key)) return cache.get(key);
+    const cv = document.createElement("canvas"); cv.width = cv.height = 128;
+    const g = cv.getContext("2d");
+    try { draw(g, id, colorArr); } catch(e){ drawFallback(g, id, colorArr, __i18n("绘制失败")); }
+    const url = cv.toDataURL();
+    cache.set(key, url);
+    return url;
+  }
+  function touch(id, colorArr){ paint(id, colorArr); }
+  const rgb = c => `rgb(${c[0]|0},${c[1]|0},${c[2]|0})`;
+  const rgbaStr = c => `rgba(${c[0]|0},${c[1]|0},${c[2]|0},${(c[3]==null?255:c[3])/255})`;
+  function rr(g, x, y, w, h, r){ g.beginPath(); g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r); g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); }
+  function star(g, cx, cy, R, r, n, rot){ g.beginPath(); for (let i = 0; i < n*2; i++){ const a = rot + i*Math.PI/n; const rad = i%2===0?R:r; const x = cx+Math.cos(a)*rad, y = cy+Math.sin(a)*rad; i===0?g.moveTo(x,y):g.lineTo(x,y); } g.closePath(); }
+  function draw(g, id, c){
+    const desc = ASSET_SUMMARY[id] || "";
+    const a = (c[3]==null?255:c[3])/255;
+    g.globalAlpha = a;
+    g.fillStyle = rgb(c); g.strokeStyle = rgb(c); g.lineWidth = 14; g.lineCap = "round";
+    switch (id){
+      case 100001: g.fillRect(0,0,128,128); return;
+      case 100002: g.beginPath(); g.arc(64,64,62,0,7); g.fill(); return;
+      case 100003: g.beginPath(); g.moveTo(64,4); g.lineTo(124,122); g.lineTo(4,122); g.closePath(); g.fill(); return;
+      case 100004: case 104001: case 104002: star(g,64,64,62,15,4,-Math.PI/2); g.fill(); return;
+      case 100005: star(g,64,64,60,26,5,-Math.PI/2); g.fill(); return;
+      case 100006: g.lineWidth = 24; g.beginPath(); g.arc(64,64,50,0,7); g.stroke(); return;
+      case 100101: g.lineWidth=16; g.beginPath(); g.moveTo(32,32); g.lineTo(96,96); g.moveTo(96,32); g.lineTo(32,96); g.stroke(); return;
+      case 100102: case 100125: case 100153: case 100155:
+        if (id !== 100102){ g.lineWidth=10; g.beginPath(); g.arc(64,64,50,0,7); g.stroke(); }
+        g.lineWidth=14; g.beginPath(); g.moveTo(34,66); g.lineTo(56,90); g.lineTo(98,38); g.stroke(); return;
+      case 100103: g.lineWidth=16; g.beginPath(); g.moveTo(80,20); g.lineTo(40,64); g.lineTo(80,108); g.stroke(); return;
+      case 100104: g.lineWidth=16; g.beginPath(); g.moveTo(48,20); g.lineTo(88,64); g.lineTo(48,108); g.stroke(); return;
+      case 100107: g.lineWidth=18; g.beginPath(); g.moveTo(64,18); g.lineTo(64,110); g.moveTo(18,64); g.lineTo(110,64); g.stroke(); return;
+      case 100108: case 100157: g.lineWidth=18; g.beginPath(); g.moveTo(18,64); g.lineTo(110,64); g.stroke(); return;
+      case 100110: g.beginPath(); g.moveTo(64,6); g.lineTo(104,52); g.lineTo(84,52); g.lineTo(84,120); g.lineTo(44,120); g.lineTo(44,52); g.lineTo(24,52); g.closePath(); g.fill(); return;
+      case 100127: case 101008: case 101009: case 101010:
+        g.lineWidth=14; g.beginPath(); g.arc(64,64,44,-0.5,4.6); g.stroke();
+        g.beginPath(); g.moveTo(106,44); g.lineTo(112,78); g.lineTo(82,62); g.closePath(); g.fill(); return;
+      case 100161: case 100162: case 101063: drawGear(g, c); return;
+      case 100169: case 100170:
+        g.lineWidth=12; g.beginPath();
+        if (id===100169){ g.moveTo(38,58); g.lineTo(38,34); g.arc(64,34,26,Math.PI,0); g.lineTo(90,58); }
+        else { g.moveTo(38,58); g.lineTo(38,34); g.arc(64,34,26,Math.PI,Math.PI*0.6,false); }
+        g.stroke(); rr(g,28,58,72,44,10); g.fill(); g.clearRect?0:0; return;
+      case 100171: case 100172:
+        g.lineWidth=14; g.beginPath(); g.arc(64,64,44, id===100171?2.8:0.5, id===100171?5.8:3.5); g.stroke();
+        g.beginPath(); g.moveTo(64,14); g.lineTo(84,26); g.lineTo(64,40); g.closePath(); g.fill(); return;
+      case 105115: g.beginPath(); g.moveTo(14,96); g.lineTo(30,40); g.lineTo(52,68); g.lineTo(64,28); g.lineTo(76,68); g.lineTo(98,40); g.lineTo(114,96); g.closePath(); g.fill();
+        g.beginPath(); g.arc(64,108,7,0,7); g.fill(); return;
+      case 105133: g.beginPath(); [[40,80,26],[70,72,32],[100,80,24]].forEach(([x,y,r])=>{ g.moveTo(x+r,y); g.arc(x,y,r,0,7);}); g.fill(); rr(g,20,74,100,22,11); g.fill(); return;
+      case 106055: case 106056: case 106057: {
+        const gr = g.createRadialGradient(64,64,4,64,64,62); gr.addColorStop(0, rgbaStr(c)); gr.addColorStop(1,"rgba(255,255,255,0)");
+        g.fillStyle = gr; g.fillRect(0,0,128,128); return; }
+      case 106058: case 106059: case 106060: {
+        const gr = g.createRadialGradient(64,64,20,64,64,64); gr.addColorStop(0,"rgba(255,255,255,0)"); gr.addColorStop(1, rgbaStr(c));
+        g.fillStyle = gr; g.fillRect(0,0,128,128); return; }
+      case 107001: { // 深蓝星空
+        const gr = g.createLinearGradient(0,0,0,128); gr.addColorStop(0,"#1a2550"); gr.addColorStop(1,"#0c1230");
+        g.fillStyle = gr; g.fillRect(0,0,128,128);
+        g.fillStyle = "#fff"; let seed = 7;
+        for (let i = 0; i < 40; i++){ seed = (seed*16807)%2147483647; const x = seed%128; seed = (seed*16807)%2147483647; const y = seed%128; g.globalAlpha = a*(0.3+ (seed%50)/100); g.fillRect(x,y,2,2); }
+        g.globalAlpha = a; g.fillStyle = "#7ea6ff"; g.beginPath(); g.arc(96,30,9,0,7); g.fill();
+        g.strokeStyle = "#ffd76e"; g.lineWidth=3; star(g,30,100,10,4,4,0); g.stroke(); return; }
+      case 107012: case 107013: case 107014: case 107015: case 107016: case 107017: case 107018: case 107019: case 107020: {
+        const cols = {107012:["#2e6b5a","#79c9a8"],107013:["#2b5f9e","#7fd0ff"],107014:["#6b4a8f","#e6a6ff"],107015:["#b07a2a","#ffd98a"],107016:["#33456e","#a8c0ff"],107017:["#3d3d6e","#9c9cf0"],107018:["#5a3550","#f0a6c8"],107019:["#7a3a30","#ffb08a"],107020:["#8a6a2a","#ffe8a6"]}[id] || ["#555","#999"];
+        const gr = g.createLinearGradient(0,0,128,128); gr.addColorStop(0,cols[0]); gr.addColorStop(1,cols[1]);
+        g.fillStyle = gr; g.fillRect(0,0,128,128); return; }
+      case 107053: case 107054: case 107055: { // 棕金按钮
+        const gr = g.createLinearGradient(0,0,0,128); gr.addColorStop(0,"#8a5a28"); gr.addColorStop(.5,"#6e441c"); gr.addColorStop(1,"#54330f");
+        g.fillStyle = gr; rr(g,6,10,116,108,26); g.fill();
+        g.strokeStyle = "#ffd76e"; g.lineWidth=6; rr(g,10,14,108,100,22); g.stroke();
+        g.fillStyle = "#ffd76e"; star(g,64,64,14,6,4,0); g.fill(); return; }
+      case 107070: { // 蓝紫星形标题条
+        const gr = g.createLinearGradient(0,0,128,0); gr.addColorStop(0,"#3d4fa0"); gr.addColorStop(.5,"#5a6ae0"); gr.addColorStop(1,"#3d4fa0");
+        g.fillStyle = gr; g.fillRect(0,16,128,96);
+        g.fillStyle = "#fff"; g.globalAlpha = a*.8; star(g,20,40,7,3,4,0); g.fill(); star(g,108,88,6,2.5,4,0); g.fill(); star(g,94,30,5,2,4,0); g.fill(); return; }
+      case 107088: { // 棕红超宽标题条
+        const gr = g.createLinearGradient(0,0,0,128); gr.addColorStop(0,"#8a4438"); gr.addColorStop(1,"#5e2b22");
+        g.fillStyle = gr; g.fillRect(0,18,128,92);
+        g.strokeStyle = "#e8b08a"; g.lineWidth=5; g.beginPath(); g.moveTo(0,18); g.lineTo(128,18); g.moveTo(0,110); g.lineTo(128,110); g.stroke(); return; }
+      case 107253: { // 米白金框奖励卡
+        g.fillStyle = "#f4ecd8"; rr(g,4,4,120,120,18); g.fill();
+        g.strokeStyle = "#d8b25e"; g.lineWidth=5; rr(g,9,9,110,110,14); g.stroke();
+        g.strokeStyle = "#b08c3e"; g.lineWidth=2; rr(g,16,16,96,96,10); g.stroke();
+        g.fillStyle = "#d8b25e"; g.beginPath(); g.arc(104,22,5,0,7); g.fill(); return; }
+      case 103137: case 103136: { // 战斗奖章
+        g.fillStyle = "#a03030"; g.beginPath(); g.moveTo(40,10); g.lineTo(58,40); g.lineTo(40,60); g.closePath(); g.fill();
+        g.beginPath(); g.moveTo(88,10); g.lineTo(70,40); g.lineTo(88,60); g.closePath(); g.fill();
+        const gr = g.createRadialGradient(52,52,8,64,64,44); gr.addColorStop(0,"#ffe8a0"); gr.addColorStop(1,"#c8901e");
+        g.fillStyle = gr; g.beginPath(); g.arc(64,64,42,0,7); g.fill();
+        g.strokeStyle = "#8a6010"; g.lineWidth=5; g.beginPath(); g.arc(64,64,42,0,7); g.stroke();
+        g.strokeStyle = "#7a5010"; star(g,64,64,24,10,5,-Math.PI/2); g.stroke(); return; }
+      case 106040: case 106009: case 106011: { g.fillStyle = rgbaStr(c); rr(g,2,2,124,124, id===106040?20:30); g.fill(); return; }
+      case 107290: case 107292: case 107296: case 107302: case 107322: case 107323: case 107326: case 107327: case 107329: case 107331: case 107342: case 107343: {
+        const cols = {107290:["#4a3a6e","#caa6ff"],107292:["#6e8adf","#a6f0ff"],107296:["#6e8adf","#a6f0ff"],107302:["#7a5a3a","#ffd8a0"],107322:["#f0e6d0","#d0b088"],107323:["#f0e6d0","#d0b088"],107326:["#324a7e","#88b0ff"],107327:["#324a7e","#88b0ff"],107329:["#2a4a8e","#6a9ae0"],107331:["#3a5a3e","#8ac08a"],107342:["#2a4a8e","#6a9ae0"],107343:["#4a3a7e","#8a7ae0"]}[id] || ["#445","#889"];
+        const gr = g.createLinearGradient(0,0,128,128); gr.addColorStop(0,cols[0]); gr.addColorStop(1,cols[1]);
+        g.fillStyle = gr; g.fillRect(0,0,128,128);
+        g.strokeStyle = "rgba(255,255,255,.35)"; g.lineWidth=6; rr(g,10,10,108,108,14); g.stroke(); return; }
+      case 110001: case 110002: case 110003: case 110004: case 110005: case 110006: case 110007: case 110008: {
+        const rot = {110002:0, 110005:90, 110007:180, 110004:270, 110001:45, 110003:135, 110008:225, 110006:315}[id] || 0;
+        g.save(); g.translate(64,64); g.rotate(rot*Math.PI/180);
+        g.beginPath(); g.moveTo(0,-56); g.lineTo(30,-18); g.lineTo(12,-18); g.lineTo(12,56); g.lineTo(-12,56); g.lineTo(-12,-18); g.lineTo(-30,-18); g.closePath(); g.fill(); g.restore(); return; }
+    }
+    if (id >= 106001 && id <= 106032){ // 圆角矩形族
+      const r = Math.min(46, (id - 106000) * 1.4);
+      if (id % 2 === 0){ g.lineWidth = 9; rr(g, 8, 8, 112, 112, r); g.stroke(); }
+      else { g.fillStyle = rgbaStr(c); rr(g, 2, 2, 124, 124, r); g.fill(); }
+      return;
+    }
+    if (id >= 106061 && id <= 106082){ // 半片渐变/C 形
+      const gr = g.createLinearGradient(0,0,128,0); gr.addColorStop(0, rgbaStr(c)); gr.addColorStop(1,"rgba(255,255,255,0)");
+      g.fillStyle = gr; g.fillRect(0,0,128,128); return;
+    }
+    if (id >= 106091 && id <= 106096){ const gr = g.createLinearGradient(0,0,128,0); gr.addColorStop(0, rgbaStr(c)); gr.addColorStop(1,"rgba(255,255,255,.2)"); g.fillStyle = gr; g.fillRect(0,26,128,76); return; }
+    if (id >= 105001 && id <= 105152){ star(g,64,64,58,24,5,-Math.PI/2); g.fill(); return; } // 星系贴纸近似
+    // —— 关键词兜底 ——
+    const kw = desc;
+    if (/轮廓|描边|边框|空心/.test(kw) && /圆/.test(kw)){ g.lineWidth = 22; g.beginPath(); g.arc(64,64,48,0,7); g.stroke(); return; }
+    if (/圆环|环/.test(kw)){ g.lineWidth = 20; g.beginPath(); g.arc(64,64,46,0,7); g.stroke(); return; }
+    if (/圆/.test(kw)){ g.beginPath(); g.arc(64,64,60,0,7); g.fill(); return; }
+    if (/四角星|四芒|闪光/.test(kw)){ star(g,64,64,60,16,4,-Math.PI/2); g.fill(); return; }
+    if (/五角星|星/.test(kw)){ star(g,64,64,58,24,5,-Math.PI/2); g.fill(); return; }
+    if (/三角/.test(kw)){ g.beginPath(); g.moveTo(64,8); g.lineTo(118,116); g.lineTo(10,116); g.closePath(); g.fill(); return; }
+    if (/箭/.test(kw)){ g.beginPath(); g.moveTo(64,10); g.lineTo(112,64); g.lineTo(88,64); g.lineTo(88,118); g.lineTo(40,118); g.lineTo(40,64); g.lineTo(16,64); g.closePath(); g.fill(); return; }
+    if (/对勾|确认/.test(kw)){ g.lineWidth=14; g.beginPath(); g.moveTo(28,66); g.lineTo(54,92); g.lineTo(100,36); g.stroke(); return; }
+    if (/X|叉|关闭/.test(kw)){ g.lineWidth=15; g.beginPath(); g.moveTo(32,32); g.lineTo(96,96); g.moveTo(96,32); g.lineTo(32,96); g.stroke(); return; }
+    if (/齿轮/.test(kw)){ drawGear(g, c); return; }
+    if (/按钮/.test(kw)){ g.fillStyle = rgbaStr(c); rr(g,6,10,116,108,24); g.fill(); g.strokeStyle="rgba(255,255,255,.4)"; g.lineWidth=5; rr(g,10,14,108,100,20); g.stroke(); return; }
+    if (/标题|横幅|条|横条/.test(kw)){ const gr = g.createLinearGradient(0,0,128,0); gr.addColorStop(0,rgbaStr(c)); gr.addColorStop(.5,"rgba(255,255,255,.25)"); gr.addColorStop(1,rgbaStr(c)); g.fillStyle = gr; g.fillRect(0,22,128,84); return; }
+    if (/面板|底|方板|页|卡/.test(kw)){ g.fillStyle = rgbaStr(c); rr(g,2,2,124,124,16); g.fill(); g.strokeStyle="rgba(0,0,0,.25)"; g.lineWidth=4; rr(g,6,6,116,116,13); g.stroke(); return; }
+    if (/框|方框/.test(kw)){ g.lineWidth = 10; rr(g,10,10,108,108,16); g.stroke(); return; }
+    if (/分隔线/.test(kw)){ g.fillRect(0,56,128,16); return; }
+    if (/锁/.test(kw)){ rr(g,30,56,68,54,10); g.fill(); g.lineWidth=12; g.beginPath(); g.arc(64,52,20,Math.PI,0); g.stroke(); return; }
+    drawFallback(g, id, c, desc ? "" : __i18n("未知素材"));
+  }
+  function drawGear(g, c){
+    g.save(); g.translate(64,64);
+    g.beginPath();
+    for (let i = 0; i < 8; i++){
+      const a = i * Math.PI / 4;
+      g.arc(0, 0, 52, a + 0.18, a + 0.6 - 0.18);
+      g.arc(Math.cos(a + 0.2) * 58, Math.sin(a + 0.2) * 58, 9, 0, 7);
+    }
+    g.closePath(); g.fill();
+    g.clearRect ? 0 : 0;
+    g.globalCompositeOperation = "destination-out";
+    g.beginPath(); g.arc(0,0,22,0,7); g.fill();
+    g.globalCompositeOperation = "source-over";
+    g.restore();
+  }
+  function drawFallback(g, id, c, note){
+    g.fillStyle = "rgba(110,110,140,.85)"; g.fillRect(0,0,128,128);
+    g.strokeStyle = "rgba(255,255,255,.25)"; g.lineWidth=3; g.strokeRect(6,6,116,116);
+    g.fillStyle = "#fff"; g.font = "bold 26px Consolas"; g.textAlign = "center";
+    g.fillText(String(id), 64, 58);
+    if (note){ g.font = "13px sans-serif"; g.fillStyle = "#d8d8f0"; g.fillText(note, 64, 84); }
+  }
+  return { paint, touch };
+})();
+
+/* ───────────────────────── 8. 控制台 ───────────────────────── */
+let conLines = [];
+function conLog(kind, msg){
+  const time = new Date().toTimeString().slice(0, 8);
+  const line = { kind, time, msg: String(msg) };
+  conLines.push(line); if (conLines.length > 2000) conLines.shift();
+  renderConLine(line);
+  if (kind === "err") console.error("[SIM]", msg); else console.log("[SIM]", msg);
+}
+function renderConLine(l){
+  const body = $("conBody"); if (!body) return;
+  const f = $("conFilter").value.trim();
+  if (f && !(l.msg.includes(f) || l.kind.includes(f))) return;
+  body.appendChild(makeConEl(l)); body.scrollTop = body.scrollHeight;
+}
+function makeConEl(l){
+  const d = document.createElement("div");
+  let cls = l.kind === "err" ? "err" : l.kind === "sys" ? "sys" : l.kind === "warn" ? "warn" : "print";
+  if (/GAME FAULT/.test(l.msg)) cls = "fault";
+  d.className = "conline " + cls;
+  d.innerHTML = `<span class="t">${l.time}</span>` + escapeHtml(l.msg);
+  return d;
+}
+function rerenderCon(){ const b = $("conBody"); b.innerHTML = ""; const f = $("conFilter").value.trim();
+  conLines.filter(l => !f || l.msg.includes(f) || l.kind.includes(f)).forEach(l => b.appendChild(makeConEl(l))); b.scrollTop = b.scrollHeight; }
+function escapeHtml(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+/* ───────────────────────── 9. 面板：控件树 / 检查器 / 信号 / 文件 ───────────────────────── */
+function selectCtrl(c){
+  if (SIM.selected && SIM.selected.div) SIM.selected.div.classList.remove("sim-selected");
+  SIM.selected = c;
+  const box = $("inspector");
+  if (!c){ box.innerHTML = __i18n('<div class="hint">运行后点击左侧控件树的节点查看属性。</div>'); return; }
+  if (c.div) c.div.classList.add("sim-selected");
+  renderInspector();
+}
+function renderInspector(){
+  const c = SIM.selected; if (!c) return;
+  const rows = [];
+  const row = (k, v) => rows.push(`<tr><td class="k">${escapeHtml(k)}</td><td class="v">${escapeHtml(v)}</td></tr>`);
+  row(__i18n("路径"), c.path());
+  row(__i18n("类型"), c.type + (c.tplId ? " @tpl " + c.tplId : ""));
+  row("alive / visible / active", `${true} / ${c.visible} / ${c.active}`);
+  row(__i18n("位置 x,y (anchor ") + c.ax.toFixed(2) + "," + c.ay.toFixed(2) + " pivot " + c.px.toFixed(2) + "," + c.py.toFixed(2) + ")", c.x.toFixed(1) + ", " + c.y.toFixed(1));
+  row(__i18n("尺寸 w×h"), c.w.toFixed(0) + " × " + c.h.toFixed(0));
+  row(__i18n("旋转/缩放"), (c.rot || 0).toFixed(0) + "° / " + c.sx.toFixed(2) + "," + c.sy.toFixed(2));
+  if (c.text) row("text", '"' + c.text.slice(0, 40) + '"');
+  if (c.fontSize) row("fontSize", c.fontSize);
+  row("fontColor", css(c.fcolor));
+  if (c.bg) row("bgColor", css(c.bg));
+  row("imageColor", css(c.imageColor) + (c.assetId ? __i18n(" @素材 ") + c.assetId : ""));
+  if (c.assetId) row(__i18n("素材描述"), ASSET_SUMMARY[c.assetId] || __i18n("(未收录)"));
+  row("raycast", c.raycast);
+  const lk = Object.entries(c.listeners.cursor).map(([k, v]) => k + "×" + v.length).join(" ");
+  if (lk) row(__i18n("光标监听"), lk);
+  const nav = SIM.navAll.filter(n => n.ctrl === c).map(n => n.type).join(" ");
+  if (nav) row(__i18n("导航监听"), nav);
+  for (const k in c.extra) row(__i18n("(属性) ") + k, typeof c.extra[k] === "object" ? JSON.stringify(c.extra[k]).slice(0, 60) : String(c.extra[k]));
+  row(__i18n("子控件数"), c.children.length);
+  $("inspector").innerHTML = `<table>${rows.join("")}</table>`;
+}
+function renderTree(){
+  const root = SIM.root; if (!root){ return; }
+  const q = ($("treeSearch").value || "").toLowerCase();
+  const box = $("ctrlTree"); box.innerHTML = "";
+  let count = 0;
+  (function walk(c, depth){
+    if (count > 1500) return;
+    const label = `${c.type}#${c.id}` + (c.text ? ` <span class="tx">"${escapeHtml(String(c.text).slice(0, 14))}"</span>` : "") + (c.assetId ? ` <span class="tv">[${c.assetId}]</span>` : "") + (!c.visible || !c.active ? ` <span class="tv">${__i18n("(隐)")}</span>` : "");
+    const hay = label.toLowerCase();
+    if (!q || hay.includes(q)){
+      count++;
+      const d = document.createElement("div");
+      d.className = "tnode" + (SIM.selected === c ? " sel" : "");
+      d.style.paddingLeft = (4 + depth * 14) + "px";
+      d.innerHTML = label;
+      d.onclick = () => { selectCtrl(c); renderTree(); };
+      box.appendChild(d);
+      c.children.forEach(ch => walk(ch, depth + 1));
+    } else {
+      c.children.forEach(ch => walk(ch, depth + 1));
+    }
+  })(root, 0);
+  if (!box.children.length) box.innerHTML = __i18n('<div class="hint">无匹配控件</div>');
+}
+setInterval(() => { if (SIM.running && $("pgTree").classList.contains("on")) renderTree(); if (SIM.selected) renderInspector(); }, 800);
+
+function refreshSignalPanel(){
+  const box = $("sigLog"); if (!box) return;
+  let html = "";
+  html += `<div class="hint" style="margin:4px 0">${__i18n("已注册回执 handler：")}${SIM.sigHandlers.size ? [...SIM.sigHandlers.keys()].map(h => `<span class="tag">${escapeHtml(h)}</span>`).join(" ") : __i18n("无")}</div>`;
+  SIM.sigHandlers.forEach((refs, name) => {
+    html += `<div class="sigRow"><span class="nm">⇠ ${escapeHtml(name)}</span> ×${refs.length}
+      <div class="btns"><button onclick="triggerHandler('${escapeHtml(name)}')">${__i18n("手动触发")}</button></div></div>`;
+  });
+  if (SIM.sigLog.length){
+    html += `<div class="hint" style="margin:6px 0 2px">${__i18n("发送记录：")}</div>`;
+    SIM.sigLog.slice(0, 12).forEach(s => {
+      const args = s.args.map(a => (a.t === "s" ? JSON.stringify(a.v) : JSON.stringify(a.v).slice(0, 48))).join(", ");
+      html += `<div class="sigRow">→ <span class="nm">${escapeHtml(s.name)}</span>(${escapeHtml(args)})</div>`;
+    });
+  }
+  box.innerHTML = html;
+}
+window.triggerHandler = function(name){
+  const refs = SIM.sigHandlers.get(name); if (!refs || !refs.length) return;
+  const input = prompt(`${__i18n("触发 ")}${name}\n${__i18n("参数(JSON 数组, 每项可以是数组/数字/字符串):")}\n${__i18n("例: ")}[[1,0,1],[3,5,0]]`, "[]");
+  if (input === null) return;
+  let args = [];
+  try { args = JSON.parse(input); if (!Array.isArray(args)) args = [args]; }
+  catch(e){ alert(__i18n("JSON 解析失败: ") + e.message); return; }
+  refs.forEach(ref => callRef(ref, [null, args], name));
+  conLog("sys", `${__i18n("[手动触发] ")}${name}(${JSON.stringify(args).slice(0, 80)})`);
+};
+
+/* 存档变量 */
+function loadSimVars(){
+  try { return JSON.parse(localStorage.getItem("sim_vars") || $("varEditor").value || "{}") || {}; }
+  catch(e){ return {}; }
+}
+function saveSimVars(obj){ localStorage.setItem("sim_vars", JSON.stringify(obj || {})); }
+
+/* 最近文件 */
+function getRecent(){ try { return JSON.parse(localStorage.getItem("sim_recent") || "[]"); } catch(e){ return []; } }
+function setRecent(list){ localStorage.setItem("sim_recent", JSON.stringify(list.slice(0, 12))); }
+function addRecent(name, code){
+  let list = getRecent().filter(f => f.name !== name);
+  list.unshift({ name, code });
+  setRecent(list); renderRecent();
+}
+function renderRecent(){
+  const list = getRecent(); const box = $("recentList");
+  if (!list.length){ box.innerHTML = __i18n('<div class="hint">暂无。导入或拖拽 .lua 到视口。</div>'); return; }
+  box.innerHTML = "";
+  list.forEach((f, i) => {
+    const d = document.createElement("div"); d.className = "fileItem";
+    d.innerHTML = `<span class="nm">${escapeHtml(f.name)}</span><span class="del" title="${__i18n("移除")}">✕</span>`;
+    d.querySelector(".nm").onclick = () => loadCode(f.code, f.name);
+    d.querySelector(".del").onclick = () => { const l = getRecent(); l.splice(i, 1); setRecent(l); renderRecent(); };
+    box.appendChild(d);
+  });
+}
+
+/* ───────────────────────── 10. 运行控制 ───────────────────────── */
+let currentCode = "", rafId = 0, loopTimer = 0, lastFrame = 0, inFrame = false;
+window.addEventListener("error", e => {
+  if (e && e.message) conLog("err", __i18n("[JS异常] ") + e.message + " @ " + String(e.filename || "").split("/").pop() + ":" + e.lineno);
+});
+function newState(){
+  const L = lauxlib.luaL_newstate();
+  lualib.luaL_openlibs(L);
+  setupCtrlBridge(L);
+  setupGlobals(L);
+  return L;
+}
+function callGlobal(L, name){
+  lua.lua_getglobal(L, to_luastring(name));
+  if (!lua.lua_isfunction(L, -1)){ lua.lua_pop(L, 1); return false; }
+  const ok = lua.lua_pcall(L, 0, 0, 0);
+  if (ok !== lua.LUA_OK){
+    const es = lua.lua_tostring(L, -1);
+    conLog("err", `[${name}${__i18n(" 错误] ")}` + (es ? to_jsstring(es) : "?"));
+    lua.lua_pop(L, 1);
+    return false;
+  }
+  return true;
+}
+function stopGame(silent){
+  if (SIM.L){
+    try {
+      if (SIM.started){
+        lua.lua_getglobal(SIM.L, to_luastring("OnDestroy"));
+        if (lua.lua_isfunction(SIM.L, -1)){ lua.lua_pcall(SIM.L, 0, 0, 0); }
+        lua.lua_pop(SIM.L, 1);
+      }
+    } catch(e){ /* 旧 state 已异常时直接丢弃 */ }
+  }
+  TWEENS.length = 0;
+  SIM.running = false; SIM.started = false; SIM.paused = false; SIM.updateEnabled = false;
+  SIM.keyListeners = []; SIM.navAll = []; SIM.sigHandlers.clear(); SIM.sigStore.clear();
+  if (SIM.focusCtrl && SIM.focusCtrl.div) SIM.focusCtrl.div.classList.remove("simfocus");
+  SIM.focusCtrl = null; SIM.L = null;
+  if (rafId) cancelAnimationFrame(rafId); rafId = 0;
+  if (!silent) conLog("sys", __i18n("已停止。"));
+  updateRunUI();
+}
+function loadCode(code, name){
+  currentCode = code; SIM.lastFileName = name || "imported.lua";
+  autoPreset(name);
+  $("runInfo").textContent = __i18n("已载入: ") + SIM.lastFileName + __i18n(" (点运行)");
+  conLog("sys", __i18n("已载入 ") + SIM.lastFileName + " (" + code.length + __i18n(" 字符)。"));
+}
+/* 按文件名自动匹配模板预设 */
+const PRESET_BY_FILE = { xiaoyouxi: "xiaoyouxi", lianliankan: "lianliankan", blocked: "blocked", cubequest: "blocked", chessswap: "blocked", blockyturn: "blockyturn", tankturmoil: "tankturmoil" };
+function autoPreset(name){
+  const n = (name || "").toLowerCase();
+  for (const k in PRESET_BY_FILE){
+    if (n.includes(k)){
+      if ($("tplPreset").value !== PRESET_BY_FILE[k]){
+        $("tplPreset").value = PRESET_BY_FILE[k];
+        $("tplPreset").dispatchEvent(new Event("change"));
+        conLog("sys", __i18n("已按文件名自动选择模板映射: ") + PRESET_BY_FILE[k]);
+      }
+      return;
+    }
+  }
+}
+function runGame(){
+  if (!FENGARI_OK){ alert(__i18n("fengari 引擎未加载(需联网加载 CDN)。请检查网络后刷新页面。")); return; }
+  stopGame(true);
+  // 清空视口控件
+  [...SIM.ctrls.values()].forEach(c => { try { c.div.remove(); } catch(e){} });
+  SIM.ctrls.clear(); SIM.ctrlSeq = 1;
+  $("viewport").querySelectorAll(".sim-ctrl").forEach(el => el.remove());
+  $("vpHint").style.display = "none";
+  SIM.root = new UIControl("container", null, 0);
+  SIM.root.div.style.width = SIM.cw + "px"; SIM.root.div.style.height = SIM.ch + "px";
+  SIM.root.div.style.left = "0"; SIM.root.div.style.top = "0"; SIM.root.div.style.transform = "none";
+  fitViewport();
+  const L = newState(); SIM.L = L;
+  let code = currentCode.replace(/^\uFEFF/, "");
+  const loadOk = lauxlib.luaL_loadbuffer(L, to_luastring(code), null, to_luastring(SIM.lastFileName));
+  if (loadOk !== lua.LUA_OK){
+    const es = lua.lua_tostring(L, -1);
+    conLog("err", __i18n("[语法错误] ") + (es ? to_jsstring(es) : "?"));
+    stopGame(true); return;
+  }
+  const ok = lua.lua_pcall(L, 0, lua.LUA_MULTRET, 0);
+  if (ok !== lua.LUA_OK){
+    const es = lua.lua_tostring(L, -1);
+    conLog("err", __i18n("[执行错误] ") + (es ? to_jsstring(es) : "?"));
+    stopGame(true); return;
+  }
+  SIM.running = true;
+  callGlobal(L, "OnInit");
+  callGlobal(L, "OnStart");
+  SIM.started = true;
+  conLog("sys", __i18n("▶ 运行 ") + SIM.lastFileName + __i18n(" | 画布 ") + SIM.cw + "×" + SIM.ch);
+  startLoop();
+  updateRunUI();
+  renderTree(); refreshSignalPanel(); renderUsedTpls();
+}
+/* 本次运行用到的模板索引 → 设置页可视化管理 */
+function renderUsedTpls(){
+  const box = document.getElementById("usedTpls"); if (!box) return;
+  const counts = {};
+  SIM.ctrls.forEach(c => { if (c.tplId) counts[c.tplId] = (counts[c.tplId] || 0) + 1; });
+  const ids = Object.keys(counts).map(Number).sort((a, b) => a - b);
+  if (!ids.length){ box.innerHTML = __i18n('<div class="hint">运行后显示。</div>'); return; }
+  const types = ["auto", "text", "image", "button", "cursor", "anim", "fullscreen", "container", "keyhint"];
+  let html = "";
+  ids.forEach(id => {
+    const cur = TPL_MAP[id] || "auto";
+    const opts = types.map(t => `<option ${t === cur ? "selected" : ""}>${t}</option>`).join("");
+    html += `<div class="row"><span class="hint" style="width:120px">${__i18n("模板 ")}${id} ×${counts[id]}</span><select data-tplid="${id}">${opts}</select></div>`;
+  });
+  html += __i18n('<div class="hint">改类型后点「⟳ 重载」生效。</div>');
+  box.innerHTML = html;
+  box.querySelectorAll("select").forEach(s => s.onchange = () => {
+    TPL_MAP[+s.dataset.tplid] = s.value;
+    const merged = {};
+    Object.keys(TPL_PRESETS).forEach(p => Object.assign(merged, TPL_PRESETS[p]));
+    Object.keys(TPL_MAP).forEach(k => merged[k] = TPL_MAP[k]);
+    $("tplPreset").value = "custom";
+    $("tplJson").value = JSON.stringify(merged, null, 1);
+    localStorage.setItem("sim_tpl", JSON.stringify({ preset: "custom", json: $("tplJson").value }));
+    conLog("sys", __i18n("模板 ") + s.dataset.tplid + " → " + s.value + __i18n("（点「⟳ 重载」生效）"));
+  });
+}
+let fps = 0, fpsN = 0, fpsT = 0;
+function startLoop(){
+  if (rafId) cancelAnimationFrame(rafId);
+  if (loopTimer) clearInterval(loopTimer);
+  lastFrame = performance.now();
+  const tick = () => { if (SIM.running) rafId = requestAnimationFrame(tick); loopStep(); };
+  rafId = requestAnimationFrame(tick);
+  loopTimer = setInterval(loopStep, 250); // 后台标签 rAF 被节流时的兜底推进
+}
+const padBtnPrev = {};
+function padConfirm(){
+  const f = ensureFocus();
+  if (!f) return;
+  try { const r0 = f.div.getBoundingClientRect();
+    conLog("sys", __i18n("[手柄] A确认 → 焦点=") + (f.type + "@" + (r0 ? Math.round(r0.x) + "," + Math.round(r0.y) + "," + Math.round(r0.width) : "?"))); } catch(e){}
+  let fired = false;
+  SIM.navAll.slice().forEach(n => { if (n.ctrl === f && n.type === "Confirm" && n.ref) fired = true; });
+  if (fired) fireNavAt(f, "Confirm");
+  else { try { f.div.dispatchEvent(new MouseEvent("click", { bubbles: true })); } catch(e){} }
+}
+function padB(){
+  const f = ensureFocus();
+  if (f) fireNavAt(f, "Cancel");
+  fireKey("ControllerMenuBackKeyDown");
+}
+function padBtnPoll(){
+  try {
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    for (const p of pads){
+      if (!p || !p.connected) continue;
+      if (!SIM.padSeen) { SIM.padSeen = true; try { conLog("sys", __i18n("🎮 检测到手柄: ") + p.id); } catch(e){} }
+      const pressed = i => !!(p.buttons[i] && p.buttons[i].pressed);
+      const st = {};
+      for (let i = 0; i < 17; i++){ st[i] = { on: pressed(i), was: !!padBtnPrev["b" + i] }; padBtnPrev["b" + i] = st[i].on; }
+      const rose = i => st[i].on && !st[i].was;
+      const fell = i => !st[i].on && st[i].was;
+      const lb = st[4].on;
+      // 官方通道映射（真机实测：十字上=Jump、十字下=Craft2、十字左=Craft1、十字右=Skill4、RB=Sprint、RT=Skill1）
+      const ch = {
+        0: lb ? ["ControllerCraftspersonKey6"] : ["ControllerJumpKey", "ControllerMenuConfirmKey"],
+        1: ["ControllerNormalAttackKey", "ControllerMenuBackKey"],
+        2: ["ControllerInteractKey"],
+        3: lb ? ["ControllerCraftspersonKey4"] : ["ControllerCharacterSkill2Key"],
+        5: lb ? ["ControllerCraftspersonKey11"] : ["ControllerSprintKey"],
+        6: lb ? ["ControllerCraftspersonKey12"] : ["ControllerCraftspersonKey3"],
+        7: lb ? ["ControllerCraftspersonKey13"] : ["ControllerCharacterSkill1Key"],
+        12: lb ? ["ControllerCraftspersonKey7"] : ["ControllerJumpKey"],
+        13: lb ? ["ControllerCraftspersonKey10"] : ["ControllerCraftspersonKey2"],
+        14: lb ? ["ControllerCraftspersonKey9"] : ["ControllerCraftspersonKey1"],
+        15: lb ? ["ControllerCraftspersonKey8"] : ["ControllerCharacterSkill4Key"],
+        10: lb ? ["ControllerCraftspersonKey14"] : [],
+      };
+      for (const k in ch){
+        const i = +k;
+        const down = rose(i), up = fell(i);
+        if (!down && !up) continue;
+        const suffix = down ? "Down" : "Up";
+        ch[k].forEach(base => fireKey(base + suffix));
+        if (down && i === 0) padConfirm();   // A=导航确认（MenuConfirm 事件已发，焦点 Confirm 由这里兜底/双通道同真机）
+        if (down && i === 1) padB();
+      }
+      // 摇杆：推杆过阈值 → 方向导航事件（焦点定向；按各方向导航配置决定是否移焦）
+      const ax = p.axes[0] || 0, ay = p.axes[1] || 0;
+      const stickOn = { up: ay < -0.55, down: ay > 0.55, left: ax < -0.55, right: ax > 0.55 };
+      const stickMap = { up: "LeftStickUp", down: "LeftStickDown", left: "LeftStickLeft", right: "LeftStickRight" };
+      for (const dir in stickMap){
+        const key = "s" + dir;
+        if (stickOn[dir] && !padBtnPrev[key]) fireNav(stickMap[dir]);
+        padBtnPrev[key] = !!stickOn[dir];
+      }
+      break;
+    }
+  } catch(e){}
+};
+function loopStep(){
+  if (!SIM.running || inFrame) return;
+  inFrame = true;
+  // 自动聚焦：真机会自动聚焦首个可聚焦控件（手柄 A/导航的投递前提），编辑器补齐同款行为
+  SIM.afT = (SIM.afT || 0) + 1;
+  if (SIM.afT % 3 === 0) padBtnPoll();
+  if (SIM.afT % 10 === 0 && (!SIM.focusCtrl || SIM.focusCtrl.alive === false || !SIM.focusCtrl.div || !SIM.focusCtrl.div.isConnected)) {
+    SIM.focusCtrl = null;  // 死引用清除（换关/重建后旧焦点失效）
+    let first = null;
+    try {
+      SIM.ctrls.forEach(c => {
+        const clickable = c.listeners && c.listeners.cursor && (c.listeners.cursor.CursorClick || []).length > 0;
+        if (first || (c.canFocus === false && !clickable) || !c.div) return;
+        if (c.active === false || c.visible === false) return;
+        const r = c.div.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) return;
+        if (c.type === "cursor" || r.width > innerWidth * 0.9) return;  // 排除全屏区域型
+        first = c;
+      });
+    } catch(e){}
+    if (first) gameSetFocus(first);
+  }
+  try {
+    const t = performance.now();
+    const realDt = Math.min(0.05, (t - lastFrame) / 1000); lastFrame = t;
+    fpsN++; fpsT += realDt;
+    if (fpsT >= 0.5){ fps = Math.round(fpsN / fpsT); fpsN = 0; fpsT = 0; updateBadge(); }
+    if (!SIM.paused){
+      const dt = realDt * SIM.timeScale;
+      SIM.vclock += dt;
+      tickTweens(SIM.vclock);
+      if (SIM.updateEnabled && SIM.L){
+        const L = SIM.L;
+        lua.lua_getglobal(L, to_luastring("OnUpdate"));
+        if (lua.lua_isfunction(L, -1)){
+          lua.lua_pushnumber(L, dt);
+          const ok = lua.lua_pcall(L, 1, 0, 0);
+          if (ok !== lua.LUA_OK){
+            const es = lua.lua_tostring(L, -1);
+            conLog("err", __i18n("[OnUpdate 错误] ") + (es ? to_jsstring(es) : "?"));
+            lua.lua_pop(L, 1);
+          }
+        } else lua.lua_pop(L, 1);
+      }
+    }
+  } finally { inFrame = false; }
+}
+function stepFrame(){
+  if (!SIM.running || !SIM.paused) return;
+  const dt = (1 / 60) * SIM.timeScale;
+  SIM.vclock += dt;
+  tickTweens(SIM.vclock);
+  if (SIM.updateEnabled && SIM.L){
+    const L = SIM.L;
+    lua.lua_getglobal(L, to_luastring("OnUpdate"));
+    if (lua.lua_isfunction(L, -1)){ lua.lua_pushnumber(L, dt); if (lua.lua_pcall(L, 1, 0, 0) !== lua.LUA_OK){ const es = lua.lua_tostring(L, -1); conLog("err", "[OnUpdate] " + (es ? to_jsstring(es) : "?")); lua.lua_pop(L, 1); } }
+    else lua.lua_pop(L, 1);
+  }
+  conLog("sys", __i18n("单帧 +16.7ms (虚拟时钟 ") + SIM.vclock.toFixed(3) + "s)");
+}
+function updateRunUI(){
+  $("btnRun").disabled = false;
+  $("btnStop").disabled = !SIM.running;
+  $("btnReload").disabled = !currentCode;
+  $("btnPause").disabled = !SIM.running;
+  $("btnStep").disabled = !SIM.running;
+  if (!SIM.running){ $("btnPause").textContent = __i18n("⏸ 暂停(F8)"); $("runInfo").textContent = __i18n("已停止"); }
+}
+function updateBadge(){
+  $("vpBadge").textContent = `${SIM.cw}×${SIM.ch} · ${fps}fps${__i18n(" · 控件")}${SIM.ctrls.size}` + (SIM.paused ? __i18n(" · 已暂停") : "");
+}
+function fitViewport(){
+  const wrap = $("viewportWrap");
+  const sc = Math.min(wrap.clientWidth / SIM.cw, wrap.clientHeight / SIM.ch);
+  const vp = $("viewport");
+  vp.style.width = SIM.cw + "px"; vp.style.height = SIM.ch + "px";
+  vp.style.transform = `scale(${sc})`;
+  updateBadge();
+}
+window.addEventListener("resize", fitViewport);
+
+/* ───────────────────────── 11. 音效 ───────────────────────── */
+let audioCtx = null;
+function playSimSfx(id){
+  if (!SIM.sfxOn) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    const semitone = (id || 30021) % 14;
+    o.frequency.value = 320 * Math.pow(2, semitone / 12);
+    o.type = "triangle";
+    g.gain.setValueAtTime(0.08, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + 0.13);
+  } catch(e){}
+}
+
+/* ───────────────────────── 12. UI 绑定 ───────────────────────── */
+document.querySelectorAll(".tabbar .tab").forEach(t => t.onclick = () => {
+  const bar = t.parentElement;
+  bar.querySelectorAll(".tab").forEach(x => x.classList.remove("on"));
+  t.classList.add("on");
+  const page = t.dataset.page;
+  document.querySelectorAll(".tabpage").forEach(p => p.classList.toggle("on", p.id === page));
+});
+$("btnRun").onclick = () => { if (currentCode) runGame(); else { conLog("warn", __i18n("请先导入 .lua。")); $("btnOpen").click(); } };
+$("btnStop").onclick = () => stopGame();
+$("btnReload").onclick = () => runGame();
+$("btnPause").onclick = () => { if (!SIM.running) return; SIM.paused = !SIM.paused; $("btnPause").textContent = SIM.paused ? __i18n("▶ 继续(F8)") : __i18n("⏸ 暂停(F8)"); updateBadge(); };
+$("btnStep").onclick = stepFrame;
+$("timeScale").oninput = e => { SIM.timeScale = +e.target.value; $("tsVal").textContent = SIM.timeScale.toFixed(1) + "x"; };
+$("vpSize").onchange = e => {
+  const [w, h] = e.target.value.split("x").map(Number);
+  SIM.cw = w; SIM.ch = h;
+  if (SIM.running){ conLog("sys", __i18n("画布改为 ") + w + "×" + h + __i18n("，自动重载…")); runGame(); }
+  else {
+    // 未运行也要重设视口并重算缩放，否则新尺寸只有一角可见
+    if (SIM.root){
+      SIM.root.div.style.width = SIM.cw + "px"; SIM.root.div.style.height = SIM.ch + "px";
+    }
+    $("vpHint").style.display = "none";
+    fitViewport();
+  }
+};
+$("btnSfx").onclick = () => { SIM.sfxOn = !SIM.sfxOn; $("btnSfx").textContent = SIM.sfxOn ? __i18n("🔊 音效开") : __i18n("🔈 音效关"); };
+$("btnOpen").onclick = () => $("fileInput").click();
+$("fileInput").onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => { loadCode(String(rd.result), f.name); addRecent(f.name, String(rd.result)); runGame(); };
+  rd.readAsText(f, "utf-8");
+  e.target.value = "";
+};
+const wrapEl = $("viewportWrap");
+wrapEl.addEventListener("dragover", e => { e.preventDefault(); wrapEl.classList.add("dragover"); });
+wrapEl.addEventListener("dragleave", () => wrapEl.classList.remove("dragover"));
+wrapEl.addEventListener("drop", e => {
+  e.preventDefault(); wrapEl.classList.remove("dragover");
+  const f = e.dataTransfer.files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => { loadCode(String(rd.result), f.name); addRecent(f.name, String(rd.result)); runGame(); };
+  rd.readAsText(f, "utf-8");
+});
+$("btnTreeRefresh").onclick = renderTree;
+$("btnConClear").onclick = () => { conLines = []; $("conBody").innerHTML = ""; };
+$("btnConExport").onclick = () => {
+  const txt = conLines.map(l => `[${l.time}][${l.kind}] ${l.msg}`).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([txt], { type: "text/plain" }));
+  a.download = "sim_log_" + Date.now() + ".txt"; a.click();
+};
+$("btnConCollapse").onclick = () => { $("consolePanel").classList.toggle("collapsed"); };
+$("conFilter").oninput = rerenderCon;
+$("btnVarApply").onclick = () => {
+  try { const v = JSON.parse($("varEditor").value || "{}"); saveSimVars(v); conLog("sys", __i18n("存档变量已应用: ") + JSON.stringify(v).slice(0, 100)); }
+  catch(e){ alert(__i18n("JSON 错误: ") + e.message); }
+};
+$("btnVarClear").onclick = () => { $("varEditor").value = "{}"; saveSimVars({}); conLog("sys", __i18n("存档变量已清空。")); };
+const TPL_PRESETS = {
+  blocked: { "1073741857": "text", "1073741856": "image", "1073741855": "button", "1073741853": "cursor", "1073741854": "keyhint" },
+  blockyturn: { "1073741852": "text", "1073741853": "image", "1073741854": "button", "1073741856": "cursor", "1073741855": "keyhint" },
+  xiaoyouxi: { "1073741851": "text", "1073741852": "image", "1073741853": "button", "1073741854": "cursor", "1073741856": "anim" },
+  lianliankan: { "1073741860": "text", "1073741861": "image", "1073741862": "cursor", "1073741863": "button", "1073741869": "anim", "1073741873": "fullscreen" },
+  tankturmoil: { "1073741852": "text", "1073741853": "button", "1073741854": "image", "1073741855": "cursor", "1073741856": "keyhint" },
+};
+function applyTpl(){
+  try {
+    const v = $("tplPreset").value;
+    const map = v === "custom" ? JSON.parse($("tplJson").value || "{}") : TPL_PRESETS[v];
+    TPL_MAP = {};
+    for (const k in map) TPL_MAP[+k] = map[k];
+    localStorage.setItem("sim_tpl", JSON.stringify({ preset: v, json: $("tplJson").value }));
+  } catch(e){ alert(__i18n("映射 JSON 错误: ") + e.message); }
+}
+$("tplPreset").onchange = () => { if ($("tplPreset").value !== "custom") $("tplJson").value = JSON.stringify(TPL_PRESETS[$("tplPreset").value], null, 1); applyTpl(); };
+$("btnTplApply").onclick = applyTpl;
+$("showVpGrid").onchange = e => {
+  let gridEl = document.getElementById("vpGrid");
+  if (e.target.checked){
+    gridEl = gridEl || document.createElement("div"); gridEl.id = "vpGrid";
+    gridEl.style.cssText = "position:absolute;inset:0;pointer-events:none;background-image:linear-gradient(#ffffff12 1px,transparent 1px),linear-gradient(90deg,#ffffff12 1px,transparent 1px);background-size:100px 100px;z-index:9999;";
+    $("viewport").appendChild(gridEl);
+  } else if (gridEl) gridEl.remove();
+};
+$("btnHelp").onclick = showHelp;
+function showHelp(){
+  $("modalTitle").textContent = __i18n("使用帮助");
+  $("modalBody").innerHTML = HELP_I18N[SIM_LANG] || `
+  <b>这是什么</b><br>
+  测试服真空期用的千星客户端 Lua 脚本模拟器：导入脚本 → 渲染画面 → 鼠标/键盘/手柄试玩。<br><br>
+  <b>快速上手</b><br>
+  1. 「📂 导入 .lua 文件」或直接把文件拖进视口 → 自动运行；<br>
+  2. 左栏「设置」选对模板映射预设（blocked/cubequest/chessswap 一套、blockyturn 一套），否则 typeof 探测会分类错；<br>
+  3. 控制台看 print / GAME FAULT 日志。<br><br>
+  <b>操作</b><br>
+  鼠标 = 光标（CursorClick/Down/Up，拖拽按住滑也支持）；<br>
+  <kbd>W A S D</kbd>/<kbd>方向键</kbd> = 移动键；<kbd>R</kbd> = 重开键(Key42)；<kbd>Esc</kbd> = 手柄返回；<kbd>Enter</kbd> = Confirm 导航；<br>
+  真手柄：插上即用（左摇杆 = GetControllerLeftStickAxis，A/B/十字键 = 导航）。<br><br>
+  <b>调试</b><br>
+  <kbd>F5</kbd> 运行 · <kbd>F8</kbd> 暂停 · <kbd>F9</kbd> 单帧步进 · 底部滑条 0.1x 慢放（Tween/OnUpdate/虚拟 os.clock 同步慢放）；<br>
+  「控件树」实时层级 + 搜索，点击节点 = 视口高亮 + 右侧检查器看全部属性；<br>
+  「信号·存档」页：*_Save→存→*_Load 自动回 *_LoadBack（自动回声）；也可手动触发任意 RegisterServerSignalHandler 的回执（参数 JSON 数组）；<br>
+  GetGlobalCustomVariableValue 读「存档变量」面板里的 JSON。<br><br>
+  <b>已知近似（非 1:1）</b><br>
+  · 官方素材图（100001~112xxx）为程序化近似绘制（形状/配色按语义），非原图；<br>
+  · 控件模板不渲染引擎样式，按脚本设置的属性绘制；<br>
+  · PlayAudio2D 为合成提示音（默认关）；<br>
+  · 导航事件全局派发（真机发给焦点控件），多数游戏行为一致。<br><br>
+  <b>限制</b><br>
+  需联网加载 fengari 引擎（CDN）；文件内容仅存本机浏览器。`;
+  $("modalBg").classList.add("on");
+}
+
+/* API 速查 */
+$("apiRef").innerHTML = `
+<div class="sec"><h4>game.*</h4><div class="hint">
+GetUICanvasSize()→cx,cy · InstantiateClientUIControl(模板,父) · DestroyClientUIControl(ctrl)<br>
+Tween(ctrl,{anchoredPositionX=…,localScaleX=…,imageColor=…},时长):SetEase():SetOnComplete():Play()<br>
+PlayAudio2D(id) · GetCursorUIPos()→x,y · GetControllerLeftStickAxis()→x,y<br>
+SetControllerFocus(ctrl)/GetControllerFocus() · GetGlobalCustomVariableValue(实体,名)<br>
+ServerSignal(名):AddIntList/AddInt/AddString():SendSignal()</div></div>
+<div class="sec"><h4>script</h4><div class="hint">script.alive/path/object · script:EnableUpdate(bool) · script:RegisterServerSignalHandler(名,fn)</div></div>
+<div class="sec"><h4>控件方法</h4><div class="hint">SetAnchorMin/Max · SetPivot · SetAnchoredPosition/GetAnchoredPosition · SetSizeDelta · SetActive/SetVisible · SetImage(源,素材ID) · SetFillUnused · SetAsLastSibling · SetLocalRotation/SetLocalScale · AddCursorEventListener(类型,fn) · AddNavigationEventListener(类型,fn) · AddKeyEventListener(类型,fn)</div></div>
+<div class="sec"><h4>控件属性</h4><div class="hint">text/fontSize/fontColor/bgColor · imageColor/imageType · raycastTarget/interactable/canControllerFocus · localScaleX/Y · anchoredPositionX/Y · alive · horizontalAlignment/verticalAlignment</div></div>
+<div class="sec"><h4>全局</h4><div class="hint">Color.FromRGB/FromRGBA → {r,g,b,a}表 · typeof(ctrl) → "ClientUI…Control" · print/printerr → 控制台 · 生命周期 OnInit/OnStart/OnUpdate(dt)/OnDestroy · os.clock=虚拟时钟 · math.isnan/isinf</div></div>`;
+
+
+/* ───────────────────────── 14. 启动 ───────────────────────── */
+window.addEventListener("error", e => {
+  if (e.message && e.message.includes("PANIC")){
+    conLog("err", __i18n("[致命] Lua 状态机 PANIC: ") + e.message + __i18n(" —— 所有交互将失效，请停止后重新运行"));
+  }
+});
+(function init(){
+  renderRecent(); refreshSignalPanel();
+  // 恢复设置
+  try {
+    const s = JSON.parse(localStorage.getItem("sim_tpl") || "null");
+    if (s){ $("tplPreset").value = s.preset in TPL_PRESETS || s.preset === "custom" ? s.preset : "blocked"; $("tplJson").value = s.json || ""; }
+    else $("tplJson").value = JSON.stringify(TPL_PRESETS.blocked, null, 1);
+  } catch(e){ $("tplJson").value = JSON.stringify(TPL_PRESETS.blocked, null, 1); }
+  applyTpl();
+  try { $("varEditor").value = localStorage.getItem("sim_vars") || "{}"; } catch(e){}
+  fitViewport();
+  if (FENGARI_OK){
+    $("fengariState").textContent = __i18n("Lua 5.3 (fengari) 就绪");
+    $("fengariState").className = "ok";
+    conLog("sys", __i18n("千星 Lua 局外编辑器已就绪。导入 .lua 开始。"));
+  } else {
+    $("fengariState").textContent = __i18n("fengari CDN 加载失败！");
+    conLog("err", __i18n("fengari 引擎未加载：本编辑器需要联网从 CDN 加载 Lua 引擎，请检查网络后刷新。"));
+  }
+  updateRunUI(); updateBadge();
+})();
+
+</script>
+</body>
+</html>
