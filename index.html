@@ -184,6 +184,9 @@ kbd{background:var(--bg3); border:1px solid var(--line); border-bottom-width:2px
           <h4>杂项</h4>
           <div class="row"><label style="display:flex;gap:4px;align-items:center;font-size:12px;"><input type="checkbox" id="autoFocusInspector">点击视口控件时自动选中到检查器</label></div>
           <div class="row"><label style="display:flex;gap:4px;align-items:center;font-size:12px;"><input type="checkbox" id="showVpGrid" >显示 100px 网格参考线</label></div>
+          <div class="row"><label style="display:flex;gap:4px;align-items:center;font-size:12px;"><input type="checkbox" id="padSwapAB">手柄 A/B 互换（任天堂布局）</label>
+          <label style="display:flex;gap:4px;align-items:center;font-size:12px;"><input type="checkbox" id="padInvertY">左摇杆 Y 轴反转</label></div>
+          <div class="row"><label style="display:flex;gap:4px;align-items:center;font-size:12px;"><input type="checkbox" id="padDiag">手柄诊断输出（控制台打印按键索引/轴值）</label></div>
         </div>
       </div>
     </div>
@@ -260,6 +263,18 @@ function buildLangSel(){
   const anchor=document.getElementById("runInfo"); bar.insertBefore(sel,anchor||null);
 }
 applyStaticLang(); buildLangSel();
+(function(){
+  try { const s = JSON.parse(localStorage.getItem("sim_padset") || "{}"); SIM.padSwapAB = !!s.swapAB; SIM.padInvertY = !!s.invY; SIM.padDiag = !!s.diag; } catch(e){}
+  const bindPadOpt = (id, key, fn) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.checked = SIM[key];
+    el.onchange = function(){ SIM[key] = el.checked; try { localStorage.setItem("sim_padset", JSON.stringify({ swapAB: SIM.padSwapAB, invY: SIM.padInvertY, diag: SIM.padDiag })); } catch(e){} if (fn) fn(); };
+  };
+  bindPadOpt("padSwapAB", "padSwapAB");
+  bindPadOpt("padInvertY", "padInvertY");
+  bindPadOpt("padDiag", "padDiag", function(){ if (!SIM.padDiag && SIM.L) conLog("sys", "[手柄诊断] 已关闭"); });
+})();
 </script>
 <script>
 "use strict";
@@ -669,6 +684,13 @@ function setupCtrlBridge(L){
     c.extra[k] = aVal(LL, 3); return 0;
   }));
   lua.lua_rawset(L, -3);
+  lua.lua_pushstring(L, to_luastring("__eq"));
+  lua.lua_pushcfunction(L, cf(function(LL){
+    const a = ctrlOf(LL, 1), b = ctrlOf(LL, 2);
+    lua.lua_pushboolean(LL, !!(a && b && a.id === b.id));
+    return 1;
+  }));
+  lua.lua_rawset(L, -3);
   lua.lua_pop(L, 1);
 }
 
@@ -946,6 +968,7 @@ function padStick(right){
       break;
     }
   } catch(e){}
+  if (!right && SIM.padInvertY && by) by = -by;
   if (!right && SIM.vstick && (Math.abs(SIM.vstick.x) + Math.abs(SIM.vstick.y)) > (Math.abs(bx) + Math.abs(by))){ bx = SIM.vstick.x; by = SIM.vstick.y; }
   return { x: bx, y: by };
 }
@@ -954,8 +977,9 @@ function fireNavAt(ctrl, type){
   SIM.navAll.slice().forEach(n => { if (n.ctrl === ctrl && n.type === type && n.ref) { try { callRef(n.ref, [undefined], "nav:" + type); } catch(e){} } });
 }
 function gameGetFocus(){
+  // 真机语义：焦点由 game.SetControllerFocus 管理（blocked 每帧断言）；模拟器只在控件销毁时清
   let f = SIM.focusCtrl;
-  if (f && (f.alive === false || !f.div || !f.div.isConnected)) { SIM.focusCtrl = null; f = null; }
+  if (f && f.alive === false) { SIM.focusCtrl = null; f = null; }
   return f;
 }
 function gameSetFocus(c){
@@ -973,21 +997,26 @@ function gameSetFocus(c){
   return c;
 }
 function ensureFocus(){ return gameGetFocus() || (function(){
-  let first = null;
+  // 分层挑选：button 类型 > 带 Confirm 监听的其他控件 > 其他可聚焦；同层取面积最大
+  let best = null, bestTier = -1, bestArea = -1, bestPlain = null, bestPlainArea = -1;
   try {
     SIM.ctrls.forEach(c => {
-      if (first) return;
       const clickable = c.listeners && c.listeners.cursor && (c.listeners.cursor.CursorClick || []).length > 0;
+      const hasConfirm = SIM.navAll.some(n => n.ctrl === c && n.type === "Confirm");
       if (c.canFocus === false && !clickable) return;
       if (c.interact === false && !clickable) return;
-      if (c.active === false || c.visible === false || !c.div) return;
+      if (c.active === false || (c.visible === false && c.type !== "cursor") || !c.div) return;
       const r = c.div.getBoundingClientRect();
       if (r.width <= 0 || r.height <= 0) return;
-      if (c.type === "cursor" || r.width > innerWidth * 0.9) return;
-      first = c;
+      if (r.width > innerWidth * 0.9) return;  // 超宽不参与；cursor/光标检测区参与（blocked padArea 焦点锚点）
+      const area = r.width * r.height;
+      if (area > bestPlainArea){ bestPlainArea = area; bestPlain = c; }
+      const tier = c.type === "button" ? 2 : (hasConfirm ? 1 : 0);
+      if (tier > 0 && (tier > bestTier || (tier === bestTier && area > bestArea))){ bestTier = tier; bestArea = area; best = c; }
     });
   } catch(e){}
-  return first ? gameSetFocus(first) : null;
+  const pick = best || bestPlain;
+  return pick ? gameSetFocus(pick) : null;
 })(); }
 const NAV_DIR = { LeftStickUp: "Up", LeftStickDown: "Down", LeftStickLeft: "Left", LeftStickRight: "Left".replace("Left", "Right") };
 NAV_DIR.LeftStickRight = "Right";
@@ -998,9 +1027,11 @@ function fireNav(type){
   const DIRMAP = { LeftStickUp: "Up", LeftStickDown: "Down", LeftStickLeft: "Left", LeftStickRight: "Right" };
   const dir = DIRMAP[type];
   if (dir){
-    const cfg = (f.navCfg && f.navCfg[dir]) || { mode: "NearestControl", target: null };
-    if (cfg.mode === "NearestControl") padFocusMoveDir(dir);
-    else if (cfg.mode === "Specified" && cfg.target) gameSetFocus(cfg.target);
+    const cfg = f.navCfg && f.navCfg[dir];
+    // 安全默认：没有明确 NearestControl 配置就不移焦（事件照发）——blocked 的 padArea 设 None 但模拟器没存上，
+    // 默认 NearestControl 会把焦点抢给万能控件导致事件投递错位
+    if (cfg && cfg.mode === "NearestControl") padFocusMoveDir(dir);
+    else if (cfg && cfg.mode === "Specified" && cfg.target) gameSetFocus(cfg.target);
   }
   fireNavAt(SIM.focusCtrl || f, type);
 }
@@ -1577,9 +1608,7 @@ function padConfirm(){
   else { try { f.div.dispatchEvent(new MouseEvent("click", { bubbles: true })); } catch(e){} }
 }
 function padB(){
-  const f = ensureFocus();
-  if (f) fireNavAt(f, "Cancel");
-  fireKey("ControllerMenuBackKeyDown");
+  fireKey("ControllerNormalAttackKeyDown");  // 对局=撤回；菜单=返回（游戏 else 分支自处理）
 }
 function padBtnPoll(){
   try {
@@ -1587,22 +1616,40 @@ function padBtnPoll(){
     for (const p of pads){
       if (!p || !p.connected) continue;
       if (!SIM.padSeen) { SIM.padSeen = true; try { conLog("sys", __i18n("🎮 检测到手柄: ") + p.id); } catch(e){} }
-      const pressed = i => !!(p.buttons[i] && p.buttons[i].pressed);
+      const physPressed = i => !!(p.buttons[i] && p.buttons[i].pressed);
+      const pressed = i => physPressed(SIM.padSwapAB ? ({ 0: 1, 1: 0, 2: 3, 3: 2 })[i] || i : i);
       const st = {};
       for (let i = 0; i < 17; i++){ st[i] = { on: pressed(i), was: !!padBtnPrev["b" + i] }; padBtnPrev["b" + i] = st[i].on; }
       const rose = i => st[i].on && !st[i].was;
       const fell = i => !st[i].on && st[i].was;
       const lb = st[4].on;
+      if (SIM.padDiag){
+        for (let i = 0; i < 17; i++){
+          if (rose(i) || fell(i)) conLog("sys", "[手柄诊断] 按钮 " + i + (st[i].on ? " 按下" : " 松开"));
+        }
+      }
       // 官方通道映射（真机实测：十字上=Jump、十字下=Craft2、十字左=Craft1、十字右=Skill4、RB=Sprint、RT=Skill1）
       const ch = {
-        0: lb ? ["ControllerCraftspersonKey6"] : ["ControllerJumpKey", "ControllerMenuConfirmKey"],
-        1: ["ControllerNormalAttackKey", "ControllerMenuBackKey"],
-        2: ["ControllerInteractKey"],
-        3: lb ? ["ControllerCraftspersonKey4"] : ["ControllerCharacterSkill2Key"],
-        5: lb ? ["ControllerCraftspersonKey11"] : ["ControllerSprintKey"],
-        6: lb ? ["ControllerCraftspersonKey12"] : ["ControllerCraftspersonKey3"],
-        7: lb ? ["ControllerCraftspersonKey13"] : ["ControllerCharacterSkill1Key"],
-        12: lb ? ["ControllerCraftspersonKey7"] : ["ControllerJumpKey"],
+        // 纯查表：物理键索引 → API 文档定义的全部事件名（Enum.KeyEventType 默认物理键列）
+        // 0 (A)   → [Jump, MenuConfirm]（文档：Jump=A, MenuConfirm=导航配置默认A）
+        // 1 (B)   → [NormalAttack, MenuBack]（文档：NormalAttack=B, MenuBack=导航配置默认B）
+        // 2 (X)   → [Interact]
+        // 3 (Y)   → [CharacterSkill2]
+        // 4 (LB)  → 单按无直接事件（只用于组合键 Craft4-14）
+        // 5 (RB)  → [Sprint]
+        // 6 (LT)  → [CraftspersonKey3]
+        // 7 (RT)  → [CharacterSkill1]
+        // 12 (十字上) → [Jump, CharacterSkill3, CraftspersonKey1]
+        // 13 (十字下) → [CraftspersonKey2, CharacterSkill4]
+        // 14 (十字左) → [CraftspersonKey1]
+        // 15 (十字右) → [CharacterSkill4]
+        1:  ["ControllerNormalAttackKey", "ControllerMenuBackKey"],
+        2:  ["ControllerInteractKey"],
+        3:  lb ? ["ControllerCraftspersonKey4"] : ["ControllerCharacterSkill2Key"],
+        5:  lb ? ["ControllerCraftspersonKey11"] : ["ControllerSprintKey"],
+        6:  lb ? ["ControllerCraftspersonKey12"] : ["ControllerCraftspersonKey3"],
+        7:  lb ? ["ControllerCraftspersonKey13"] : ["ControllerCharacterSkill1Key"],
+        12: lb ? ["ControllerCraftspersonKey7"] : ["ControllerJumpKey", "ControllerCharacterSkill3Key"],
         13: lb ? ["ControllerCraftspersonKey10"] : ["ControllerCraftspersonKey2"],
         14: lb ? ["ControllerCraftspersonKey9"] : ["ControllerCraftspersonKey1"],
         15: lb ? ["ControllerCraftspersonKey8"] : ["ControllerCharacterSkill4Key"],
@@ -1614,16 +1661,30 @@ function padBtnPoll(){
         if (!down && !up) continue;
         const suffix = down ? "Down" : "Up";
         ch[k].forEach(base => fireKey(base + suffix));
-        if (down && i === 0) padConfirm();   // A=导航确认（MenuConfirm 事件已发，焦点 Confirm 由这里兜底/双通道同真机）
-        if (down && i === 1) padB();
+      }
+      const aDown = rose(0), aUp = fell(0);
+      if (aDown || aUp){
+        // A = Jump + MenuConfirm（API 文档标准，同帧全发，游戏自己挑）
+        const suffix = aDown ? "KeyDown" : "KeyUp";
+        fireKey("ControllerJump" + suffix);
+        fireKey("ControllerMenuConfirm" + suffix);
       }
       // 摇杆：推杆过阈值 → 方向导航事件（焦点定向；按各方向导航配置决定是否移焦）
-      const ax = p.axes[0] || 0, ay = p.axes[1] || 0;
-      const stickOn = { up: ay < -0.55, down: ay > 0.55, left: ax < -0.55, right: ax > 0.55 };
+      let ax = p.axes[0] || 0, ay = p.axes[1] || 0;
+      if (SIM.padInvertY) ay = -ay;
+      if (SIM.padDiag && (Math.abs(ax) > 0.3 || Math.abs(ay) > 0.3)){
+        const t = performance.now();
+        if (t - (padBtnPrev.axT || 0) > 600){ padBtnPrev.axT = t; conLog("sys", "[手柄诊断] 摇杆 ax=" + ax.toFixed(2) + " ay=" + ay.toFixed(2) + " → 判定 " + JSON.stringify(stickOn)); }
+      }
+      const stickOn = { up: ay < -0.35, down: ay > 0.35, left: ax < -0.35, right: ax > 0.35 };
       const stickMap = { up: "LeftStickUp", down: "LeftStickDown", left: "LeftStickLeft", right: "LeftStickRight" };
+      const nowMs = performance.now();
       for (const dir in stickMap){
         const key = "s" + dir;
-        if (stickOn[dir] && !padBtnPrev[key]) fireNav(stickMap[dir]);
+        if (stickOn[dir]){
+          if (!padBtnPrev[key]) fireNav(stickMap[dir]);
+          else if (nowMs - (padBtnPrev[key + "t"] || 0) > 280){ fireNav(stickMap[dir]); padBtnPrev[key + "t"] = nowMs; }
+        }
         padBtnPrev[key] = !!stickOn[dir];
       }
       break;
@@ -1646,7 +1707,7 @@ function loopStep(){
         if (c.active === false || c.visible === false) return;
         const r = c.div.getBoundingClientRect();
         if (r.width <= 0 || r.height <= 0) return;
-        if (c.type === "cursor" || r.width > innerWidth * 0.9) return;  // 排除全屏区域型
+        if (r.width > innerWidth * 0.9) return;  // 超宽不参与；cursor/光标检测区参与（blocked padArea 焦点锚点）  // 排除全屏区域型
         first = c;
       });
     } catch(e){}
